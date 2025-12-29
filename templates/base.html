@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ATP Family League</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 980px; margin: 32px auto; padding: 0 16px; }
+    header { display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
+    nav a { margin-right: 12px; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f6f6f6; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 14px 0; }
+    .muted { color:#666; font-size: 0.95rem; }
+    input, select { padding: 8px; margin: 6px 0; width: 100%; max-width: 520px; }
+    button { padding: 10px 14px; border: 1px solid #111; background: #111; color: #fff; border-radius: 10px; cursor: pointer; }
+    button:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h2 style="margin:0;">ATP Family League</h2>
+      <div class="muted">Season {{year}}</div>
+    </div>
+    <nav>
+      <a href="/">Standings</a>
+      <a href="/picks">Enter Picks</a>
+      <a href="/results">Enter Results</a>
+    </nav>
+  </header>
+  <hr/>
+  {% block content %}{% endblock %}
+</body>
+</html>
