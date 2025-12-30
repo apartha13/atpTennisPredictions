@@ -171,7 +171,6 @@ def home(request: Request):
     people = get_people()
     events = get_events()
     totals = calc_totals()
-    breakdown = calc_event_breakdown()
 
     return templates.TemplateResponse("home.html", {
         "request": request,
@@ -179,7 +178,6 @@ def home(request: Request):
         "people": people,
         "events": events,
         "totals": totals,
-        "breakdown": breakdown,
     })
 
 
@@ -233,6 +231,14 @@ def submit_pick(
 
     return RedirectResponse("/picks", status_code=303)
 
+@app.get("/breakdown", response_class=HTMLResponse)
+def breakdown_page(request: Request):
+    breakdown = calc_event_breakdown()
+    return templates.TemplateResponse("breakdown.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "breakdown": breakdown,
+    })
 
 @app.get("/results", response_class=HTMLResponse)
 def results_page(request: Request):

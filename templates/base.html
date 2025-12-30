@@ -1,31 +1,144 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>ATP Family League</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 980px; margin: 32px auto; padding: 0 16px; }
-    header { display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
-    nav a { margin-right: 12px; }
-    table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    th { background: #f6f6f6; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 14px 0; }
-    .muted { color:#666; font-size: 0.95rem; }
-    input, select { padding: 8px; margin: 6px 0; width: 100%; max-width: 520px; }
-    button { padding: 10px 14px; border: 1px solid #111; background: #111; color: #fff; border-radius: 10px; cursor: pointer; }
-    button:hover { opacity: 0.9; }
-  </style>
-</head>
+    <head>
+        <meta charset="utf-8"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1"/>
+      
+        <!-- Google Fonts -->
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+      
+        <title>ATP Family League</title>
+      
+        <style>
+          :root {
+            --bg-blue: #0049a2;
+            --card-blue: #6acde3;
+            --text-white: #ffffff;
+            --text-muted: rgba(255,255,255,0.85);
+            --border-light: rgba(0, 0, 0, 0.25);
+          }
+      
+          body {
+            font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            background: var(--bg-blue);
+            color: var(--text-white);
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 32px 20px;
+          }
+      
+          h1, h2, h3, h4 {
+            font-family: 'Playfair Display', serif;
+            letter-spacing: 0.3px;
+          }
+      
+          header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 12px;
+          }
+      
+          nav a {
+            color: var(--text-white);
+            text-decoration: none;
+            margin-right: 14px;
+            font-weight: 500;
+          }
+      
+          nav a:hover {
+            text-decoration: underline;
+          }
+      
+          hr {
+            border: none;
+            border-top: 1px solid var(--border-light);
+            margin: 16px 0 28px;
+          }
+      
+          .card {
+            background: var(--card-blue);
+            border-radius: 16px;
+            padding: 22px;
+            margin: 22px 0;
+            box-shadow: 0 10px 24px rgba(0,0,0,0.08);
+          }
+      
+          table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 12px;
+            font-size: 0.95rem;
+          }
+      
+          th, td {
+            border-bottom: 1px solid var(--border-light);
+            padding: 10px 8px;
+            text-align: left;
+          }
+      
+          th {
+            font-weight: 600;
+            color: var(--text-white);
+          }
+      
+          td.points {
+            text-align: left;
+            font-weight: 600;
+          }
+      
+          td.rank {
+            text-align: left;
+            font-size: 1.1rem;
+          }
+      
+          .leader-gold   { background: rgba(255, 215, 0, 0.18); }
+          .leader-silver { background: rgba(255, 255, 255, 0.12); }
+          .leader-bronze { background: rgba(205, 127, 50, 0.18); }
+      
+          input, select {
+            padding: 10px;
+            margin-top: 6px;
+            width: 100%;
+            max-width: 520px;
+            border-radius: 10px;
+            border: none;
+            font-size: 0.95rem;
+          }
+      
+          button {
+            margin-top: 12px;
+            padding: 10px 16px;
+            border: none;
+            background: #111;
+            color: #fff;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+          }
+      
+          button:hover {
+            opacity: 0.9;
+          }
+      
+          .muted {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+          }
+        </style>
+      </head>
 <body>
   <header>
     <div>
-      <h2 style="margin:0;">ATP Family League</h2>
+      <h2 style="margin:0;">ATP Predictions</h2>
       <div class="muted">Season {{year}}</div>
     </div>
     <nav>
       <a href="/">Standings</a>
+      <a href="/breakdown">Breakdown</a>
       <a href="/picks">Enter Picks</a>
       <a href="/results">Enter Results</a>
     </nav>

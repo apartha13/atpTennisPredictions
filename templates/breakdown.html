@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h3>Per-event breakdown</h3>
+
+{% if breakdown|length == 0 %}
+  <div class="card">
+    <div class="muted">No picks yet. Once people submit picks, events will show up here.</div>
+  </div>
+{% else %}
+  {% for ev in breakdown %}
+    <div class="card">
+      <h4 style="margin:0 0 8px 0;">{{ ev.short_id }} — {{ ev.name }}</h4>
+      <table>
+        <thead><tr><th>Person</th><th>Pick</th><th>Round</th><th>Points</th></tr></thead>
+        <tbody>
+          {% for row in ev.rows %}
+            <tr>
+              <td>{{ row.person }}</td>
+              <td>{{ row.player }}</td>
+              <td>{{ row.round }}</td>
+              <td>{{ row.points }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endfor %}
+{% endif %}
+
+{% endblock %}
