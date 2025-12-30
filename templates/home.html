@@ -2,18 +2,33 @@
 {% block content %}
 
 <div class="card">
-  <h3 style="margin-top:0;">Total Leaderboard</h3>
+  <h3 style="margin-top:0;">Leaderboard</h3>
   {% if totals|length == 0 %}
     <div class="muted">No picks yet. Add people and enter picks to get started.</div>
   {% else %}
     <table>
       <thead><tr><th>#</th><th>Person</th><th>Total Points</th></tr></thead>
-      <tbody>
+      <tbody>              
         {% for (person, total) in totals %}
-          <tr>
-            <td>{{ loop.index }}</td>
+          <tr class="
+            {% if loop.index == 1 %}leader-gold
+            {% elif loop.index == 2 %}leader-silver
+            {% elif loop.index == 3 %}leader-bronze
+            {% endif %}
+          ">
+            <td class="rank">
+              {% if loop.index == 1 %}
+                🥇
+              {% elif loop.index == 2 %}
+                🥈
+              {% elif loop.index == 3 %}
+                🥉
+              {% else %}
+                {{ loop.index }}
+              {% endif %}
+            </td>
             <td>{{ person }}</td>
-            <td>{{ total }}</td>
+            <td class="points">{{ total }}</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -24,32 +39,10 @@
 <div class="card">
   <h3 style="margin-top:0;">Add a person</h3>
   <form action="/add_person" method="post">
-    <input name="name" placeholder="e.g., Ajay, Mom, Dad" required />
+    <input name="name" placeholder="e.g., John, Sam" required />
     <button type="submit">Add</button>
   </form>
-  <div class="muted">Tip: people can still submit picks even if they aren’t added yet, but adding helps the dropdown.</div>
+  <div class="muted">Add your name before you can enter your picks</div>
 </div>
-
-{% if breakdown|length > 0 %}
-  <h3>Per-event breakdown</h3>
-  {% for ev in breakdown %}
-    <div class="card">
-      <h4 style="margin:0 0 8px 0;">{{ ev.short_id }} — {{ ev.name }}</h4>
-      <table>
-        <thead><tr><th>Person</th><th>Pick</th><th>Round</th><th>Points</th></tr></thead>
-        <tbody>
-          {% for row in ev.rows %}
-            <tr>
-              <td>{{ row.person }}</td>
-              <td>{{ row.player }}</td>
-              <td>{{ row.round }}</td>
-              <td>{{ row.points }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% endfor %}
-{% endif %}
 
 {% endblock %}
