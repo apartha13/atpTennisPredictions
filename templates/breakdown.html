@@ -1,7 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
 
-<h3>Per-event breakdown</h3>
+<div class="card">
+  <h3 style="margin-top:0;">Per-event breakdown</h3>
+
+  <form method="get" action="/breakdown">
+    <label class="muted" for="event_id">Show</label><br/>
+    <select name="event_id" id="event_id" onchange="this.form.submit()">
+      <option value="" {% if selected_event_id == "" %}selected{% endif %}>All events</option>
+
+      {% for ev in events %}
+        <option value="{{ ev.id }}" {% if ev.id == selected_event_id %}selected{% endif %}>
+          {{ ev.short_id }} — {{ ev.name }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <noscript>
+      <button type="submit" style="margin-top:10px;">View</button>
+    </noscript>
+  </form>
+</div>
 
 {% if breakdown|length == 0 %}
   <div class="card">
@@ -12,14 +31,14 @@
     <div class="card">
       <h4 style="margin:0 0 8px 0;">{{ ev.short_id }} — {{ ev.name }}</h4>
       <table>
-        <thead><tr><th>Person</th><th>Pick</th><th>Round</th><th>Points</th></tr></thead>
+        <thead><tr><th>Person</th><th>Pick</th><th>Round</th><th class="points">Points</th></tr></thead>
         <tbody>
           {% for row in ev.rows %}
             <tr>
               <td>{{ row.person }}</td>
               <td>{{ row.player }}</td>
               <td>{{ row.round }}</td>
-              <td>{{ row.points }}</td>
+              <td class="points">{{ row.points }}</td>
             </tr>
           {% endfor %}
         </tbody>

@@ -9,28 +9,25 @@
     <table>
       <thead><tr><th>#</th><th>Person</th><th>Total Points</th></tr></thead>
       <tbody>              
-        {% for (person, total) in totals %}
-          <tr class="
-            {% if loop.index == 1 %}leader-gold
-            {% elif loop.index == 2 %}leader-silver
-            {% elif loop.index == 3 %}leader-bronze
+        {% for row in totals %}
+        <tr class="
+      {% if row.rank == 1 %}leader-gold
+      {% elif row.rank == 2 %}leader-silver
+      {% elif row.rank == 3 %}leader-bronze
+      {% endif %}
+    ">
+          <td class="rank">
+            {% if row.medal %}
+              {{ row.medal }}
+            {% else %}
+              {{ row.rank }}
             {% endif %}
-          ">
-            <td class="rank">
-              {% if loop.index == 1 %}
-                🥇
-              {% elif loop.index == 2 %}
-                🥈
-              {% elif loop.index == 3 %}
-                🥉
-              {% else %}
-                {{ loop.index }}
-              {% endif %}
-            </td>
-            <td>{{ person }}</td>
-            <td class="points">{{ total }}</td>
-          </tr>
-        {% endfor %}
+          </td>
+          <td>{{ row.person }}</td>
+          <td class="points">{{ row.total }}</td>
+        </tr>
+      {% endfor %}
+      
       </tbody>
     </table>
   {% endif %}
@@ -39,7 +36,7 @@
 <div class="card">
   <h3 style="margin-top:0;">Add a person</h3>
   <form action="/add_person" method="post">
-    <input name="name" placeholder="e.g., John, Sam" required />
+    <input name="name" placeholder="e.g., John" required />
     <button type="submit">Add</button>
   </form>
   <div class="muted">Add your name before you can enter your picks</div>

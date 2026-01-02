@@ -1,8 +1,9 @@
 import os
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import create_engine, text
+from typing import Optional
 
 # --- League config ---
 EVENTS_13 = [
@@ -20,6 +21,23 @@ EVENTS_13 = [
     ("SHA", "Shanghai", "masters"),
     ("PAR", "Paris", "masters"),
 ]
+
+EVENTS_ORDERED = [
+    ("AO", "Australian Open", "slam"),
+    ("IW", "Indian Wells", "masters"),
+    ("MIA", "Miami", "masters"),
+    ("MON", "Monte Carlo", "masters"),
+    ("MAD", "Madrid", "masters"),
+    ("ROM", "Rome", "masters"),
+    ("RG", "Roland Garros", "slam"),
+    ("WIM", "Wimbledon", "slam"),
+    ("CAN", "Canada", "masters"),
+    ("CIN", "Cincinnati", "masters"),
+    ("USO", "US Open", "slam"),
+    ("SHA", "Shanghai", "masters"),
+    ("PAR", "Paris", "masters"),
+]
+
 
 ALLOWED_ROUNDS = ["W", "F", "SF", "QF", "R16", "R32", "R64", "R128"]
 
@@ -77,13 +95,25 @@ def init_db() -> None:
         """))
 
         # Seed 13 events for the configured year
-        for short_id, name, level in EVENTS_13:
+        for idx, (short_id, name, level) in enumerate(EVENTS_ORDERED, start=1):
             event_id = f"{short_id}{LEAGUE_YEAR}"
             conn.execute(text("""
-              INSERT INTO events (id, short_id, name, level, year)
-              VALUES (:id, :sid, :name, :level, :year)
-              ON CONFLICT (id) DO NOTHING;
-            """), {"id": event_id, "sid": short_id, "name": name, "level": level, "year": LEAGUE_YEAR})
+                INSERT INTO events (id, short_id, name, level, sort_order, year)
+                VALUES (:id, :short_id, :name, :level, :sort_order, :year)
+                ON CONFLICT (id) DO UPDATE SET
+                    short_id = EXCLUDED.short_id,
+                    name = EXCLUDED.name,
+                    level = EXCLUDED.level,
+                    sort_order = EXCLUDED.sort_order;
+            """), {
+                "id": event_id,
+                "short_id": short_id,
+                "name": name,
+                "level": level,
+                "sort_order": idx,
+                "year": LEAGUE_YEAR
+            })
+
 
 
 @app.on_event("startup")
@@ -131,6 +161,42 @@ def calc_totals() -> list[tuple[str, int]]:
         """), {"year": LEAGUE_YEAR}).fetchall()
     return [(r[0], int(r[1])) for r in rows]
 
+def rank_with_ties(totals: list[tuple[str, int]]) -> list[dict]:
+    """
+    Input:  [(person, total_points), ...] sorted DESC by points.
+    Output: [{person, total, rank, medal}, ...] with tie-aware ranks/medals.
+
+    Example ranks: 1, 1, 3, 4...
+    """
+    ranked = []
+    prev_total = None
+    rank = 0          # displayed rank (1-based)
+    seen = 0          # number of rows processed
+
+    for person, total in totals:
+        seen += 1
+        if prev_total is None or total != prev_total:
+            rank = seen
+            prev_total = total
+
+        if rank == 1:
+            medal = "🥇"
+        elif rank == 2:
+            medal = "🥈"
+        elif rank == 3:
+            medal = "🥉"
+        else:
+            medal = ""
+
+        ranked.append({
+            "person": person,
+            "total": total,
+            "rank": rank,
+            "medal": medal,
+        })
+
+    return ranked
+
 
 def calc_event_breakdown():
     """
@@ -150,7 +216,7 @@ def calc_event_breakdown():
           ON r.event_id = p.event_id
          AND r.player_name = p.player_name
         WHERE e.year = :year
-        ORDER BY e.id, p.person_name;
+        ORDER BY e.sort_order ASC, p.person_name;
         """), {"year": LEAGUE_YEAR}).fetchall()
 
     # Group into event blocks
@@ -170,7 +236,7 @@ def calc_event_breakdown():
 def home(request: Request):
     people = get_people()
     events = get_events()
-    totals = calc_totals()
+    totals = rank_with_ties(calc_totals())
 
     return templates.TemplateResponse("home.html", {
         "request": request,
@@ -232,11 +298,19 @@ def submit_pick(
     return RedirectResponse("/picks", status_code=303)
 
 @app.get("/breakdown", response_class=HTMLResponse)
-def breakdown_page(request: Request):
+def breakdown_page(request: Request, event_id: Optional[str] = Query(default=None)):
+    events = get_events()  
     breakdown = calc_event_breakdown()
+
+    # Filter to one event if selected
+    if event_id:
+        breakdown = [ev for ev in breakdown if ev["event_id"] == event_id]
+
     return templates.TemplateResponse("breakdown.html", {
         "request": request,
         "year": LEAGUE_YEAR,
+        "events": events,                     
+        "selected_event_id": event_id or "",  
         "breakdown": breakdown,
     })
 
