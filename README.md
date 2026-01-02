@@ -1,4 +1,4 @@
-# 🎾 ATP Predictions — Family Tennis League
+# 🎾 ATP Predictions — Tennis League
 
 A web application for running a private ATP tennis prediction league.  
 Family and friends make **one pick per event**, earn points based on how far their player advances, and track standings throughout the season.
@@ -58,3 +58,39 @@ Example scoring (configurable):
 ```bash
 git clone https://github.com/your-username/atp-predictions.git
 cd atp-predictions
+
+### 2️⃣ Create and activate a virtual environment
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+
+### 3️⃣ Install dependencies
+```bash
+pip install -r requirements.txt
+
+### 4️⃣ Set environment variables
+export DATABASE_URL="postgresql+psycopg2://..."
+export COMMISSIONER_KEY="your-secret-key"
+export LEAGUE_YEAR="2026"
+
+### 5️⃣ Run the server
+```bash
+uvicorn app:app --reload
+
+Visit: http://127.0.0.1:8000
+
+## Project Structure
+
+.
+├── app.py
+├── requirements.txt
+├── templates/
+│   ├── base.html
+│   ├── home.html
+│   ├── picks.html
+│   ├── results.html
+│   └── breakdown.html
+├── static/
+│   └── (optional CSS / assets)
+└── README.md
+
