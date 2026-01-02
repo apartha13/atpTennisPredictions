@@ -10,10 +10,9 @@ Built with **FastAPI**, **Supabase (Postgres)**, and a clean, modern UI.
 ## ✨ Features
 
 - 🏆 **Live leaderboard** with automatic point calculation
-- 🎾 **14 events**:
+- 🎾 **13 events**:
   - 4 Grand Slams  
   - 9 ATP Masters 1000  
-  - Nitto ATP Finals
 - 👤 **One pick per person per event**
 - 🔁 Picks can be updated (overwrite previous pick)
 - 🔒 **Commissioner-only results entry**
