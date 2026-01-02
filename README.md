@@ -80,7 +80,7 @@ uvicorn app:app --reload
 Visit: http://127.0.0.1:8000
 
 ## Project Structure
-
+```arduino
 .
 ├── app.py
 ├── requirements.txt
@@ -93,4 +93,4 @@ Visit: http://127.0.0.1:8000
 ├── static/
 │   └── (optional CSS / assets)
 └── README.md
-
+```
