@@ -4,6 +4,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import create_engine, text
 from typing import Optional
+from urllib.parse import urlencode 
+from fastapi.staticfiles import StaticFiles
 
 # --- League config ---
 EVENTS_13 = [
@@ -51,6 +53,7 @@ COMMISSIONER_KEY = os.environ.get("COMMISSIONER_KEY", "")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
@@ -261,13 +264,20 @@ def add_person(name: str = Form(...)):
 
 
 @app.get("/picks", response_class=HTMLResponse)
-def picks_page(request: Request):
+def picks_page(
+    request: Request,
+    person: str = Query(default=""),
+    event_id: str = Query(default=""),
+):
     return templates.TemplateResponse("picks.html", {
         "request": request,
         "year": LEAGUE_YEAR,
         "people": get_people(),
         "events": get_events(),
+        "selected_person": person,
+        "selected_event_id": event_id,
     })
+
 
 
 @app.post("/picks")
@@ -295,7 +305,8 @@ def submit_pick(
           DO UPDATE SET player_name = excluded.player_name;
         """), {"e": event_id, "p": person, "pl": player})
 
-    return RedirectResponse("/picks", status_code=303)
+    qs = urlencode({"person": person, "event_id": event_id})
+    return RedirectResponse(f"/picks?{qs}", status_code=303)
 
 @app.get("/breakdown", response_class=HTMLResponse)
 def breakdown_page(request: Request, event_id: Optional[str] = Query(default=None)):
