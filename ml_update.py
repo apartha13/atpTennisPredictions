@@ -60,18 +60,7 @@ def upsert_matches(conn, rows: list[dict]) -> int:
       :match_key, :tourney_id, :tourney_name, :tourney_level, :surface, :tourney_date, :match_num,
       :round, :winner_name, :loser_name, :score, :minutes
     )
-    ON CONFLICT (match_key) DO UPDATE SET
-      tourney_id    = EXCLUDED.tourney_id,
-      tourney_name  = EXCLUDED.tourney_name,
-      tourney_level = COALESCE(EXCLUDED.tourney_level, matches.tourney_level),
-      surface       = COALESCE(EXCLUDED.surface, matches.surface),
-      tourney_date  = COALESCE(EXCLUDED.tourney_date, matches.tourney_date),
-      match_num     = COALESCE(EXCLUDED.match_num, matches.match_num),
-      round         = COALESCE(EXCLUDED.round, matches.round),
-      winner_name   = COALESCE(EXCLUDED.winner_name, matches.winner_name),
-      loser_name    = COALESCE(EXCLUDED.loser_name, matches.loser_name),
-      score         = COALESCE(EXCLUDED.score, matches.score),
-      minutes       = COALESCE(EXCLUDED.minutes, matches.minutes);
+    ON CONFLICT (match_key) DO NOTHING;
 """), params)
 
         # rowcount should be 1 if inserted, 0 if conflict/no-op
@@ -296,6 +285,67 @@ def recompute_elos(
             "m": int(surf_n.get((player, surface), 0)),
         })
 
+def backfill_h2h(conn) -> None:
+    """
+    Rebuild h2h table from matches using SQL aggregation (FAST).
+    Produces:
+      - surface-specific rows (Hard/Clay/Grass/Carpet/Unknown)
+      - an "All" surface row per pair
+    """
+    # Ensure table exists
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS h2h (
+      player_lo TEXT NOT NULL,
+      player_hi TEXT NOT NULL,
+      surface   TEXT NOT NULL,
+      lo_wins   INT  NOT NULL DEFAULT 0,
+      hi_wins   INT  NOT NULL DEFAULT 0,
+      last_match_date INT NULL,
+      PRIMARY KEY (player_lo, player_hi, surface)
+    );
+    """))
+
+    # Rebuild
+    conn.execute(text("TRUNCATE h2h;"))
+
+    base_where = """
+    WHERE winner_name IS NOT NULL
+      AND loser_name  IS NOT NULL
+      AND COALESCE(score, '') <> ''
+      AND COALESCE(score, '') NOT ILIKE '%w/o%'
+    """
+
+    # 1) Surface-specific H2H
+    conn.execute(text(f"""
+    INSERT INTO h2h (player_lo, player_hi, surface, lo_wins, hi_wins, last_match_date)
+    SELECT
+      LEAST(winner_name, loser_name)  AS player_lo,
+      GREATEST(winner_name, loser_name) AS player_hi,
+      COALESCE(surface, 'Unknown')    AS surface,
+      SUM(CASE WHEN winner_name = LEAST(winner_name, loser_name) THEN 1 ELSE 0 END) AS lo_wins,
+      SUM(CASE WHEN winner_name = GREATEST(winner_name, loser_name) THEN 1 ELSE 0 END) AS hi_wins,
+      MAX(tourney_date) AS last_match_date
+    FROM matches
+    {base_where}
+    GROUP BY 1,2,3;
+    """))
+
+    # 2) All-surfaces H2H
+    conn.execute(text(f"""
+    INSERT INTO h2h (player_lo, player_hi, surface, lo_wins, hi_wins, last_match_date)
+    SELECT
+      LEAST(winner_name, loser_name)  AS player_lo,
+      GREATEST(winner_name, loser_name) AS player_hi,
+      'All'                           AS surface,
+      SUM(CASE WHEN winner_name = LEAST(winner_name, loser_name) THEN 1 ELSE 0 END) AS lo_wins,
+      SUM(CASE WHEN winner_name = GREATEST(winner_name, loser_name) THEN 1 ELSE 0 END) AS hi_wins,
+      MAX(tourney_date) AS last_match_date
+    FROM matches
+    {base_where}
+    GROUP BY 1,2;
+    """))
+
+
 def set_state(conn, key: str, value: str) -> None:
     conn.execute(text("""
         INSERT INTO model_state (key, value)
@@ -321,7 +371,11 @@ def backfill_years(conn, start_year: int, end_year: int) -> None:
     set_state(conn, "last_ingest_at", datetime.utcnow().isoformat() + "Z")
 
 def update_model(conn, start_year: int, end_year: int) -> None:
+    print("[ML] backfill_years start")
     backfill_years(conn, start_year, end_year)
-    # write_per_match_elos=False unless you add the columns
+    print("[ML] recompute_elos start")
     recompute_elos(conn, write_per_match_elos=False)
+    print("[ML] backfill_h2h start")
+    backfill_h2h(conn)
+    print("[ML] done — writing state")
     set_state(conn, "last_model_update_at", datetime.utcnow().isoformat() + "Z")

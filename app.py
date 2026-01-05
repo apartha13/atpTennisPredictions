@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS events (
         match_key TEXT PRIMARY KEY,
         tourney_id TEXT,
         tourney_name TEXT,
+        tourney_level TEXT,
         surface TEXT,
         tourney_date INT,
         match_num INT,
@@ -124,6 +125,18 @@ CREATE TABLE IF NOT EXISTS events (
         matches_played INT NOT NULL DEFAULT 0,
         last_updated TIMESTAMP NOT NULL DEFAULT NOW(),
         PRIMARY KEY (player_name, surface)
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS h2h (
+        player_lo TEXT NOT NULL,
+        player_hi TEXT NOT NULL,
+        surface   TEXT NOT NULL,
+        lo_wins   INT  NOT NULL DEFAULT 0,
+        hi_wins   INT  NOT NULL DEFAULT 0,
+        last_match_date INT NULL,
+        PRIMARY KEY (player_lo, player_hi, surface)
         );
         """))
 
