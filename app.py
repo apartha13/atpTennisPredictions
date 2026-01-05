@@ -389,7 +389,7 @@ def model_update(commissioner_key: str = Form(...)):
     if commissioner_key != COMMISSIONER_KEY:
         raise HTTPException(403, "Wrong commissioner key.")
 
-    START_YEAR = 2024
+    START_YEAR = 2022
     END_YEAR = 2025
 
     with engine.begin() as conn:

@@ -2,7 +2,7 @@ import csv
 import io
 import math
 import requests
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy import text
 
 SURFACE_MAP = {
@@ -110,6 +110,38 @@ def tourney_multiplier(tourney_level: str | None) -> float:
         return 1.13   # Masters 1000
     return 1.0
 
+def date_from_yyyymmdd(x: int | None) -> date | None:
+    if not x:
+        return None
+    s = str(int(x))
+    # expects YYYYMMDD
+    return date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
+
+def recency_multiplier(
+    match_day: date | None,
+    anchor_day: date,
+    recent_days: int = 500,      # ~1.5 years
+    recent_boost: float = 1.30,  # 50% more weight in last 2 years
+    old_floor: float = 0.50      # older matches still matter, but less
+) -> float:
+    """
+    If match is within last 2 years (relative to anchor_day), boost updates.
+    If older, downweight smoothly down to old_floor.
+    """
+    if match_day is None:
+        return 1.0
+
+    age_days = (anchor_day - match_day).days
+    if age_days <= recent_days:
+        return recent_boost
+
+    # Older than 2 years: linearly taper down toward old_floor over next 8 years (customizable)
+    # You can make this exponential if you prefer, but linear is simple + stable.
+    taper_days = 8 * 365
+    extra = min(age_days - recent_days, taper_days)
+    frac = extra / taper_days  # 0..1
+    return recent_boost - (recent_boost - old_floor) * frac
+
 def recompute_elos(
     conn,
     base_elo: float = 1500.0,
@@ -124,12 +156,22 @@ def recompute_elos(
     back onto the matches table (requires you to add those columns).
     """
     rows = conn.execute(text("""
-        SELECT match_key, surface, tourney_level, winner_name, loser_name
+        SELECT match_key, surface, tourney_level, tourney_date, winner_name, loser_name
         FROM matches
         WHERE winner_name IS NOT NULL
-          AND loser_name IS NOT NULL
+            AND loser_name IS NOT NULL
         ORDER BY tourney_date ASC NULLS LAST, match_num ASC NULLS LAST;
     """)).fetchall()
+
+    # anchor = date of the latest match we have (so "last 2 years" is relative to your dataset)
+    last_td = None
+    for r in reversed(rows):
+        # r = (match_key, surface, tourney_level, tourney_date, winner, loser)
+        td = r[3]
+        if td:
+            last_td = int(td)
+            break
+    anchor_day = date_from_yyyymmdd(last_td) or date.today()
 
     overall = {}   # player -> elo
     overall_n = {} # player -> matches played
@@ -151,9 +193,12 @@ def recompute_elos(
         surf_n[(p, s)] = surf_n.get((p, s), 0) + 1
         return surf_n[(p, s)]
 
-    for match_key, surface, tourney_level, winner, loser in rows:
+    for match_key, surface, tourney_level, tourney_date, winner, loser in rows:
         surface = SURFACE_MAP.get(surface or "Unknown", surface or "Unknown")
         mult = tourney_multiplier(tourney_level)
+
+        match_day = date_from_yyyymmdd(int(tourney_date) if tourney_date else None)
+        mult *= recency_multiplier(match_day, anchor_day)   
 
         # ----- OVERALL ELO -----
         ra_o = get_overall(winner)
