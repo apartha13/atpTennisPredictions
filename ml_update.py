@@ -40,6 +40,7 @@ def upsert_matches(conn, rows: list[dict]) -> int:
             "match_key": mk,
             "tourney_id": row.get("tourney_id"),
             "tourney_name": row.get("tourney_name"),
+            "tourney_level": row.get("tourney_level"),
             "surface": surface,
             "tourney_date": int(row["tourney_date"]) if row.get("tourney_date") else None,
             "match_num": int(row["match_num"]) if row.get("match_num") else None,
@@ -51,16 +52,27 @@ def upsert_matches(conn, rows: list[dict]) -> int:
         }
 
         res = conn.execute(text("""
-            INSERT INTO matches (
-              match_key, tourney_id, tourney_name, surface, tourney_date, match_num,
-              round, winner_name, loser_name, score, minutes
-            )
-            VALUES (
-              :match_key, :tourney_id, :tourney_name, :surface, :tourney_date, :match_num,
-              :round, :winner_name, :loser_name, :score, :minutes
-            )
-            ON CONFLICT (match_key) DO NOTHING;
-        """), params)
+    INSERT INTO matches (
+      match_key, tourney_id, tourney_name, tourney_level, surface, tourney_date, match_num,
+      round, winner_name, loser_name, score, minutes
+    )
+    VALUES (
+      :match_key, :tourney_id, :tourney_name, :tourney_level, :surface, :tourney_date, :match_num,
+      :round, :winner_name, :loser_name, :score, :minutes
+    )
+    ON CONFLICT (match_key) DO UPDATE SET
+      tourney_id    = EXCLUDED.tourney_id,
+      tourney_name  = EXCLUDED.tourney_name,
+      tourney_level = COALESCE(EXCLUDED.tourney_level, matches.tourney_level),
+      surface       = COALESCE(EXCLUDED.surface, matches.surface),
+      tourney_date  = COALESCE(EXCLUDED.tourney_date, matches.tourney_date),
+      match_num     = COALESCE(EXCLUDED.match_num, matches.match_num),
+      round         = COALESCE(EXCLUDED.round, matches.round),
+      winner_name   = COALESCE(EXCLUDED.winner_name, matches.winner_name),
+      loser_name    = COALESCE(EXCLUDED.loser_name, matches.loser_name),
+      score         = COALESCE(EXCLUDED.score, matches.score),
+      minutes       = COALESCE(EXCLUDED.minutes, matches.minutes);
+"""), params)
 
         # rowcount should be 1 if inserted, 0 if conflict/no-op
         try:
@@ -83,6 +95,21 @@ def k_factor(matches_played: int, k_min: float = 16.0, k_max: float = 40.0) -> f
     mp = max(0, int(matches_played))
     return k_min + (k_max - k_min) * math.exp(-mp / 40.0)
 
+def tourney_multiplier(tourney_level: str | None) -> float:
+    """
+    Slightly increase Elo update size for bigger events.
+    Common ATP-style codes:
+      G = Grand Slam
+      M = Masters 1000
+    If your dataset differs, this safely defaults to 1.0.
+    """
+    lvl = (tourney_level or "").strip().upper()
+    if lvl == "G":
+        return 1.25   # Grand Slams
+    if lvl == "M":
+        return 1.13   # Masters 1000
+    return 1.0
+
 def recompute_elos(
     conn,
     base_elo: float = 1500.0,
@@ -97,7 +124,7 @@ def recompute_elos(
     back onto the matches table (requires you to add those columns).
     """
     rows = conn.execute(text("""
-        SELECT match_key, surface, winner_name, loser_name
+        SELECT match_key, surface, tourney_level, winner_name, loser_name
         FROM matches
         WHERE winner_name IS NOT NULL
           AND loser_name IS NOT NULL
@@ -124,16 +151,17 @@ def recompute_elos(
         surf_n[(p, s)] = surf_n.get((p, s), 0) + 1
         return surf_n[(p, s)]
 
-    for match_key, surface, winner, loser in rows:
+    for match_key, surface, tourney_level, winner, loser in rows:
         surface = SURFACE_MAP.get(surface or "Unknown", surface or "Unknown")
+        mult = tourney_multiplier(tourney_level)
 
         # ----- OVERALL ELO -----
         ra_o = get_overall(winner)
         rb_o = get_overall(loser)
         ea_o = expected_score(ra_o, rb_o)
 
-        k_w_o = k_factor(overall_n.get(winner, 0))
-        k_l_o = k_factor(overall_n.get(loser, 0))
+        k_w_o = k_factor(overall_n.get(winner, 0)) * mult
+        k_l_o = k_factor(overall_n.get(loser, 0)) * mult
 
         ra_o_new = ra_o + k_w_o * (1.0 - ea_o)
         rb_o_new = rb_o + k_l_o * (0.0 - (1.0 - ea_o))
@@ -148,8 +176,8 @@ def recompute_elos(
         rb_s = get_surface(loser, surface)
         ea_s = expected_score(ra_s, rb_s)
 
-        k_w_s = k_factor(surf_n.get((winner, surface), 0))
-        k_l_s = k_factor(surf_n.get((loser, surface), 0))
+        k_w_s = k_factor(surf_n.get((winner, surface), 0)) * mult
+        k_l_s = k_factor(surf_n.get((loser, surface), 0)) * mult
 
         ra_s_new = ra_s + k_w_s * (1.0 - ea_s)
         rb_s_new = rb_s + k_l_s * (0.0 - (1.0 - ea_s))
