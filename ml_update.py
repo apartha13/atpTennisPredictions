@@ -345,6 +345,72 @@ def backfill_h2h(conn) -> None:
     GROUP BY 1,2;
     """))
 
+def build_event_key(tourney_name: str | None, surface: str | None) -> str:
+    """
+    Stable across years. Does NOT include tourney_level.
+    """
+    n = (tourney_name or "").strip().lower() or "unknown"
+    s = (surface or "Unknown").strip()
+    return f"{n}|{s}"
+
+def backfill_event_record(conn) -> None:
+    """
+    Aggregate record across all years for the same tournament name + surface.
+    (tourney_level is intentionally ignored because it becomes unreliable in later years)
+    """
+
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS player_event_record (
+      player_name TEXT NOT NULL,
+      event_key   TEXT NOT NULL,
+      wins        INT  NOT NULL DEFAULT 0,
+      losses      INT  NOT NULL DEFAULT 0,
+      last_played_date INT NULL,
+      PRIMARY KEY (player_name, event_key)
+    );
+    """))
+
+    conn.execute(text("TRUNCATE player_event_record;"))
+
+    base_where = """
+    WHERE winner_name IS NOT NULL
+      AND loser_name  IS NOT NULL
+      AND COALESCE(score, '') <> ''
+      AND COALESCE(score, '') NOT ILIKE '%w/o%'
+    """
+
+    # Build event_key in SQL so it's fast
+    conn.execute(text(f"""
+    INSERT INTO player_event_record (player_name, event_key, wins, losses, last_played_date)
+    SELECT
+      player_name,
+      event_key,
+      SUM(win)  AS wins,
+      SUM(loss) AS losses,
+      MAX(tourney_date) AS last_played_date
+    FROM (
+      SELECT
+        winner_name AS player_name,
+        (LOWER(TRIM(tourney_name)) || '|' || COALESCE(surface,'Unknown')) AS event_key,
+        1 AS win,
+        0 AS loss,
+        tourney_date
+      FROM matches
+      {base_where}
+
+      UNION ALL
+
+      SELECT
+        loser_name AS player_name,
+        (LOWER(TRIM(tourney_name)) || '|' || COALESCE(surface,'Unknown')) AS event_key,
+        0 AS win,
+        1 AS loss,
+        tourney_date
+      FROM matches
+      {base_where}
+    ) x
+    GROUP BY player_name, event_key;
+    """))
 
 def set_state(conn, key: str, value: str) -> None:
     conn.execute(text("""
@@ -373,9 +439,16 @@ def backfill_years(conn, start_year: int, end_year: int) -> None:
 def update_model(conn, start_year: int, end_year: int) -> None:
     print("[ML] backfill_years start")
     backfill_years(conn, start_year, end_year)
+
     print("[ML] recompute_elos start")
     recompute_elos(conn, write_per_match_elos=False)
+
     print("[ML] backfill_h2h start")
     backfill_h2h(conn)
+
+    print("[ML] backfill_event_record start")
+    backfill_event_record(conn)
+    print("[ML] backfill_event_record done")
+
     print("[ML] done — writing state")
     set_state(conn, "last_model_update_at", datetime.utcnow().isoformat() + "Z")
