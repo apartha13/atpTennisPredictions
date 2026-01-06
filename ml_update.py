@@ -469,7 +469,7 @@ def smoothed_rate(wins: int, losses: int, prior: float = 0.5, prior_games: int =
     return (w + prior * pg) / (w + l + pg)
 
 def expected_from_elodiff(diff: float) -> float:
-    return 1.0 / (1.0 + 10 ** (-(diff) / 400.0))
+    return 1.0 / (1.0 + 10 ** (-(diff) / 650.0))
 
 def get_elos(conn, player: str, surface: str, base_elo: float = 1500.0) -> tuple[float, float]:
     s = (surface or "Unknown").strip()
@@ -537,7 +537,7 @@ def predict_h2h(conn, player_a: str, player_b: str, surface: str, tourney_name: 
     p_h2h_a = smoothed_rate(a_wa, b_wa, prior=0.5, prior_games=8)
 
     # small Elo-like adjustment
-    h2h_edge = (p_h2h_s - 0.5) * 100.0 + (p_h2h_a - 0.5) * 40.0
+    h2h_edge = (p_h2h_s - 0.5) * 120.0 + (p_h2h_a - 0.5) * 40.0
 
     event_edge = 0.0
     if tourney_name:
@@ -600,7 +600,7 @@ def tournament_odds_no_draw(conn, tourney_name: str, surface: str, pool_n: int =
 
         w, l = get_event_record(conn, p, ek)
         r = smoothed_rate(w, l, prior=0.5, prior_games=10)
-        rec_bonus = (r - 0.5) * 100.0
+        rec_bonus = (r - 0.5) * 200.0
 
         strength = blend + rec_bonus
         strengths.append((p, float(strength), float(p_s), float(p_o), int(w), int(l), float(rec_bonus)))
