@@ -24,7 +24,26 @@ def fetch_year_rows(year: int) -> list[dict]:
     return list(reader)
 
 def make_match_key(row: dict) -> str:
-    return f"{row.get('tourney_id','')}|{row.get('tourney_date','')}|{row.get('match_num','')}"
+    """
+    Use match_num when present. If match_num is missing (happens in some seasons),
+    fall back to a deterministic key based on matchup + round + score.
+    """
+    tid = (row.get("tourney_id") or "").strip()
+    tdate = (row.get("tourney_date") or "").strip()
+    mnum = (row.get("match_num") or "").strip()
+
+    if mnum:
+        return f"{tid}|{tdate}|{mnum}"
+
+    # Fallback: deterministic “signature” for the match
+    w = (row.get("winner_name") or "").strip()
+    l = (row.get("loser_name") or "").strip()
+    rnd = (row.get("round") or "").strip()
+    score = (row.get("score") or "").strip()
+    minutes = (row.get("minutes") or "").strip()
+
+    # This is stable across re-runs and avoids collisions when match_num is blank
+    return f"{tid}|{tdate}|{rnd}|{w}|{l}|{score}|{minutes}"
 
 def upsert_matches(conn, rows: list[dict]) -> int:
     """
@@ -311,7 +330,6 @@ def backfill_h2h(conn) -> None:
     base_where = """
     WHERE winner_name IS NOT NULL
       AND loser_name  IS NOT NULL
-      AND COALESCE(score, '') <> ''
       AND COALESCE(score, '') NOT ILIKE '%w/o%'
     """
 
@@ -375,7 +393,6 @@ def backfill_event_record(conn) -> None:
     base_where = """
     WHERE winner_name IS NOT NULL
       AND loser_name  IS NOT NULL
-      AND COALESCE(score, '') <> ''
       AND COALESCE(score, '') NOT ILIKE '%w/o%'
     """
 
@@ -435,6 +452,183 @@ def backfill_years(conn, start_year: int, end_year: int) -> None:
 
     set_state(conn, "last_backfill", f"{start_year}-{end_year}")
     set_state(conn, "last_ingest_at", datetime.utcnow().isoformat() + "Z")
+
+# PREDICTION UTILITIES
+
+def canon_pair(a: str, b: str) -> tuple[str, str, bool]:
+    a = (a or "").strip()
+    b = (b or "").strip()
+    if a <= b:
+        return a, b, True
+    return b, a, False
+
+def smoothed_rate(wins: int, losses: int, prior: float = 0.5, prior_games: int = 6) -> float:
+    w = max(0, int(wins or 0))
+    l = max(0, int(losses or 0))
+    pg = max(1, int(prior_games))
+    return (w + prior * pg) / (w + l + pg)
+
+def expected_from_elodiff(diff: float) -> float:
+    return 1.0 / (1.0 + 10 ** (-(diff) / 400.0))
+
+def get_elos(conn, player: str, surface: str, base_elo: float = 1500.0) -> tuple[float, float]:
+    s = (surface or "Unknown").strip()
+    row_s = conn.execute(text("""
+        SELECT elo FROM elo_surface WHERE player_name=:p AND surface=:s
+    """), {"p": player, "s": s}).fetchone()
+
+    row_o = conn.execute(text("""
+        SELECT elo FROM elo_overall WHERE player_name=:p
+    """), {"p": player}).fetchone()
+
+    surf_elo = float(row_s[0]) if row_s and row_s[0] is not None else float(base_elo)
+    ov_elo   = float(row_o[0]) if row_o and row_o[0] is not None else float(base_elo)
+    return surf_elo, ov_elo
+
+def get_h2h(conn, a: str, b: str, surface: str) -> tuple[int, int, int, int]:
+    """
+    Returns: (a_wins_surface, b_wins_surface, a_wins_all, b_wins_all)
+    """
+    s = (surface or "Unknown").strip()
+    lo, hi, a_is_lo = canon_pair(a, b)
+
+    def fetch(surf_key: str) -> tuple[int, int]:
+        r = conn.execute(text("""
+            SELECT lo_wins, hi_wins
+            FROM h2h
+            WHERE player_lo=:lo AND player_hi=:hi AND surface=:s
+        """), {"lo": lo, "hi": hi, "s": surf_key}).fetchone()
+        if not r:
+            return (0, 0)
+        lo_w, hi_w = int(r[0] or 0), int(r[1] or 0)
+        return (lo_w, hi_w) if a_is_lo else (hi_w, lo_w)
+
+    a_ws, b_ws = fetch(s)
+    a_wa, b_wa = fetch("All")
+    return a_ws, b_ws, a_wa, b_wa
+
+def get_event_record(conn, player: str, event_key: str) -> tuple[int, int]:
+    r = conn.execute(text("""
+        SELECT wins, losses
+        FROM player_event_record
+        WHERE player_name=:p AND event_key=:k
+    """), {"p": player, "k": event_key}).fetchone()
+    if not r:
+        return (0, 0)
+    return int(r[0] or 0), int(r[1] or 0)
+
+def predict_h2h(conn, player_a: str, player_b: str, surface: str, tourney_name: str | None = None) -> dict:
+    """
+    Uses:
+      - blended Elo (75% surface, 25% overall)
+      - H2H adj (surface + all)
+      - optional event record bonus (if tourney_name passed)
+    """
+    s = (surface or "Unknown").strip()
+
+    a_s, a_o = get_elos(conn, player_a, s)
+    b_s, b_o = get_elos(conn, player_b, s)
+
+    a_blend = 0.75 * a_s + 0.25 * a_o
+    b_blend = 0.75 * b_s + 0.25 * b_o
+
+    a_ws, b_ws, a_wa, b_wa = get_h2h(conn, player_a, player_b, s)
+    p_h2h_s = smoothed_rate(a_ws, b_ws, prior=0.5, prior_games=4)
+    p_h2h_a = smoothed_rate(a_wa, b_wa, prior=0.5, prior_games=8)
+
+    # small Elo-like adjustment
+    h2h_edge = (p_h2h_s - 0.5) * 100.0 + (p_h2h_a - 0.5) * 40.0
+
+    event_edge = 0.0
+    if tourney_name:
+        ek = build_event_key(tourney_name, s)
+        a_w, a_l = get_event_record(conn, player_a, ek)
+        b_w, b_l = get_event_record(conn, player_b, ek)
+        a_r = smoothed_rate(a_w, a_l, prior=0.5, prior_games=10)
+        b_r = smoothed_rate(b_w, b_l, prior=0.5, prior_games=10)
+        event_edge = (a_r - b_r) * 35.0
+
+    diff = (a_blend - b_blend) + h2h_edge + event_edge
+    p_a = expected_from_elodiff(diff)
+
+    return {
+        "player_a": player_a,
+        "player_b": player_b,
+        "surface": s,
+        "p_a": float(p_a),
+        "p_b": float(1.0 - p_a),
+        "breakdown": {
+            "a_surface_elo": float(a_s),
+            "a_overall_elo": float(a_o),
+            "b_surface_elo": float(b_s),
+            "b_overall_elo": float(b_o),
+            "a_blend": float(a_blend),
+            "b_blend": float(b_blend),
+            "a_h2h_surface": int(a_ws),
+            "b_h2h_surface": int(b_ws),
+            "a_h2h_all": int(a_wa),
+            "b_h2h_all": int(b_wa),
+            "h2h_edge_elo": float(h2h_edge),
+            "event_edge_elo": float(event_edge),
+            "final_elo_diff": float(diff),
+        }
+    }
+
+def tournament_odds_no_draw(conn, tourney_name: str, surface: str, pool_n: int = 64) -> list[dict]:
+    """
+    Returns pie-chart-ready probabilities that sum to 1.0.
+    Candidate pool = top N by surface Elo on that surface.
+    Strength = 85% surface Elo + 15% overall Elo + small event record bonus.
+    """
+    s = (surface or "Unknown").strip()
+    ek = build_event_key(tourney_name, s)
+
+    # pick a pool of likely entrants
+    rows = conn.execute(text("""
+        SELECT player_name
+        FROM elo_surface
+        WHERE surface=:s
+        ORDER BY elo DESC
+        LIMIT :n
+    """), {"s": s, "n": int(pool_n)}).fetchall()
+    players = [r[0] for r in rows]
+
+    strengths = []
+    for p in players:
+        p_s, p_o = get_elos(conn, p, s)
+        blend = 0.70 * p_s + 0.30 * p_o
+
+        w, l = get_event_record(conn, p, ek)
+        r = smoothed_rate(w, l, prior=0.5, prior_games=10)
+        rec_bonus = (r - 0.5) * 100.0
+
+        strength = blend + rec_bonus
+        strengths.append((p, float(strength), float(p_s), float(p_o), int(w), int(l), float(rec_bonus)))
+
+    if not strengths:
+        return []
+
+    # softmax
+    max_s = max(x[1] for x in strengths)
+    temp = 125.0
+    exps = [math.exp((x[1] - max_s) / temp) for x in strengths]
+    total = sum(exps) or 1.0
+
+    out = []
+    for (p, strength, p_s, p_o, w, l, rec_bonus), e in zip(strengths, exps):
+        out.append({
+            "player": p,
+            "p": float(e / total),
+            "surface_elo": p_s,
+            "overall_elo": p_o,
+            "event_wins": w,
+            "event_losses": l,
+            "event_bonus_elo": rec_bonus,
+            "strength": strength,
+        })
+
+    out.sort(key=lambda d: d["p"], reverse=True)
+    return out
 
 def update_model(conn, start_year: int, end_year: int) -> None:
     print("[ML] backfill_years start")

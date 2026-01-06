@@ -7,6 +7,7 @@ from typing import Optional
 from urllib.parse import urlencode 
 from fastapi.staticfiles import StaticFiles
 from ml_update import update_model
+from ml_update import update_model, predict_h2h, tournament_odds_no_draw
 
 
 # --- League config ---
@@ -42,6 +43,21 @@ EVENTS_ORDERED = [
     ("PAR", "Paris", "masters"),
 ]
 
+EVENT_META = {
+    "AO":  {"tourney_name": "Australian Open", "surface": "Hard"},
+    "IW":  {"tourney_name": "Indian Wells Masters", "surface": "Hard"},
+    "MIA": {"tourney_name": "Miami Masters", "surface": "Hard"},
+    "MON": {"tourney_name": "Monte Carlo Masters", "surface": "Clay"},
+    "MAD": {"tourney_name": "Madrid Masters", "surface": "Clay"},
+    "ROM": {"tourney_name": "Rome Masters", "surface": "Clay"},
+    "RG":  {"tourney_name": "Roland Garros", "surface": "Clay"},
+    "WIM": {"tourney_name": "Wimbledon", "surface": "Grass"},
+    "CAN": {"tourney_name": "Canada Masters", "surface": "Hard"},
+    "CIN": {"tourney_name": "Cincinnati Masters", "surface": "Hard"},
+    "USO": {"tourney_name": "US Open", "surface": "Hard"},
+    "SHA": {"tourney_name": "Shanghai Masters", "surface": "Hard"},
+    "PAR": {"tourney_name": "Paris Masters", "surface": "Hard"},
+}
 
 ALLOWED_ROUNDS = ["W", "F", "SF", "QF", "R16", "R32", "R64", "R128"]
 
@@ -118,6 +134,15 @@ CREATE TABLE IF NOT EXISTS events (
         """))
 
         conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS elo_overall (
+        player_name TEXT PRIMARY KEY,
+        elo NUMERIC NOT NULL,
+        matches_played INT NOT NULL DEFAULT 0,
+        last_updated TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+        """))
+
+        conn.execute(text("""
         CREATE TABLE IF NOT EXISTS elo_surface (
         player_name TEXT NOT NULL,
         surface TEXT NOT NULL,
@@ -137,6 +162,17 @@ CREATE TABLE IF NOT EXISTS events (
         hi_wins   INT  NOT NULL DEFAULT 0,
         last_match_date INT NULL,
         PRIMARY KEY (player_lo, player_hi, surface)
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS player_event_record (
+        player_name TEXT NOT NULL,
+        event_key   TEXT NOT NULL,
+        wins        INT  NOT NULL DEFAULT 0,
+        losses      INT  NOT NULL DEFAULT 0,
+        last_played_date INT NULL,
+        PRIMARY KEY (player_name, event_key)
         );
         """))
 
@@ -411,6 +447,62 @@ def model_update(commissioner_key: str = Form(...)):
 
     return RedirectResponse("/model", status_code=303)
 
+@app.get("/api/h2h")
+def api_h2h(
+    player_a: str,
+    player_b: str,
+    surface: str = "Hard",
+    tourney_name: Optional[str] = None,
+):
+    with engine.begin() as conn:
+        return predict_h2h(conn, player_a.strip(), player_b.strip(), surface.strip(), tourney_name=tourney_name)
+
+@app.get("/api/tournament_odds")
+def api_tournament_odds(
+    event_short: str,
+    top_k: int = 10,
+    pool_n: int = 64,
+):
+    key = (event_short or "").strip().upper()
+    if key not in EVENT_META:
+        raise HTTPException(400, f"Unknown event_short. Use one of: {sorted(EVENT_META.keys())}")
+
+    meta = EVENT_META[key]
+
+    with engine.begin() as conn:
+        odds = tournament_odds_no_draw(conn, meta["tourney_name"], meta["surface"], pool_n=int(pool_n))
+
+    # Make pie-chart friendly: top_k + Other
+    top_k = max(1, int(top_k))
+    head = odds[:top_k]
+    tail = odds[top_k:]
+
+    other_p = sum(x["p"] for x in tail)
+    pie = [{"label": x["player"], "p": float(x["p"])} for x in head]
+    if other_p > 0:
+        pie.append({"label": "Other", "p": float(other_p)})
+
+    # normalize
+    total = sum(x["p"] for x in pie) or 1.0
+    for x in pie:
+        x["p"] = float(x["p"] / total)
+
+    return {
+        "event_short": key,
+        "tourney_name": meta["tourney_name"],
+        "surface": meta["surface"],
+        "pie": pie,          # PERFECT for a pie chart
+        "top_detail": head,  # includes elos + record bonus + etc
+    }
+
+@app.get("/predict", response_class=HTMLResponse)
+def predict_page(request: Request):
+    return templates.TemplateResponse("predict.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "events": get_events(),          # existing helper you already have
+        "event_meta": EVENT_META,        # the dict you added earlier
+    })
 
 @app.get("/results", response_class=HTMLResponse)
 def results_page(request: Request):
