@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h3 style="margin-top:0;">Predictions</h3>
+  <div class="muted">
+    Who is most likely to win? Records are from the past 4 seasons of ATP.
+  </div>
+</div>
+
+<!-- ------------------ TOURNAMENT ODDS ------------------ -->
+<div class="card">
+  <h3 style="margin-top:0;">Tournament Odds (No Draw)</h3>
+
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+    <div style="min-width:220px;">
+      <label class="muted">Event</label><br/>
+      <select id="event_short" style="width:100%; padding:8px;">
+        {% for ev in events %}
+          {# ev.short_id like AO, IW... #}
+          <option value="{{ ev.short_id }}">{{ ev.short_id }} — {{ ev.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div style="min-width:120px;">
+      <label class="muted">Top K</label><br/>
+      <input id="top_k" type="number" value="8" min="1" max="30" style="width:100%; padding:8px;" />
+    </div>
+
+    <div style="min-width:120px;">
+      <label class="muted">Pool N</label><br/>
+      <input id="pool_n" type="number" value="64" min="8" max="256" style="width:100%; padding:8px;" />
+    </div>
+
+    <button id="btn_odds" type="button" style="padding:10px 14px;">
+      Compute odds
+    </button>
+  </div>
+
+  <div id="odds_status" class="muted" style="margin-top:10px;"></div>
+
+  <div id="odds_summary" style="margin-top:12px;"></div>
+
+  <div style="margin-top:14px;">
+    <h4 style="margin:8px 0;">Pie data (for charting)</h4>
+    <canvas id="odds_pie" class="pie"></canvas>
+    <div id="pie_preview" class="muted" style="margin-top:8px;"></div>
+  </div>
+
+  <div style="margin-top:14px;">
+    <h4 style="margin:8px 0;">Top players</h4>
+    <div id="odds_table_wrap"></div>
+  </div>
+</div>
+
+<!-- ------------------ HEAD TO HEAD ------------------ -->
+<div class="card">
+  <h3 style="margin-top:0;">Head-to-head Predictor</h3>
+
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+    <div style="min-width:240px;">
+      <label class="muted">Player A</label><br/>
+      <input id="h2h_a" placeholder="e.g., Novak Djokovic" style="width:100%; padding:8px;" />
+    </div>
+
+    <div style="min-width:240px;">
+      <label class="muted">Player B</label><br/>
+      <input id="h2h_b" placeholder="e.g., Carlos Alcaraz" style="width:100%; padding:8px;" />
+    </div>
+
+    <div style="min-width:140px;">
+      <label class="muted">Surface</label><br/>
+      <select id="h2h_surface" style="width:100%; padding:8px;">
+        <option>Hard</option>
+        <option>Clay</option>
+        <option>Grass</option>
+        <option>Carpet</option>
+        <option>Unknown</option>
+      </select>
+    </div>
+
+    <div style="min-width:220px;">
+      <label class="muted">Optional: tournament name</label><br/>
+      <input id="h2h_tourney" placeholder="e.g., Wimbledon" style="width:100%; padding:8px;" />
+    </div>
+
+    <button id="btn_h2h" type="button" style="padding:10px 14px;">
+      Predict match
+    </button>
+  </div>
+
+  <div id="h2h_status" class="muted" style="margin-top:10px;"></div>
+  <div id="h2h_result" style="margin-top:12px;"></div>
+</div>
+
+<script>
+  function pct(x) {
+    return (x * 100).toFixed(1) + "%";
+  }
+
+  function esc(s) {
+    return String(s || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  async function fetchJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) {
+      const text = await r.text();
+      throw new Error(text || ("HTTP " + r.status));
+    }
+    return await r.json();
+  }
+
+  let pieChart = null;
+
+function renderPie(pie) {
+  const ctx = document.getElementById("odds_pie");
+  if (!ctx) return;
+
+  const labels = pie.map(x => x.label);
+  const values = pie.map(x => x.p * 100);
+
+  if (pieChart) pieChart.destroy();
+
+  pieChart = new Chart(ctx, {
+    type: "pie",
+    data: {
+      labels,
+      datasets: [{
+        data: values
+      }]
+    },
+    options: {
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: {
+          callbacks: {
+            label: (item) => `${item.label}: ${item.raw.toFixed(1)}%`
+          }
+        }
+      }
+    }
+  });
+}
+
+  // ---------------- TOURNAMENT ODDS ----------------
+  async function computeOdds() {
+    const eventShort = document.getElementById("event_short").value;
+    const topK = parseInt(document.getElementById("top_k").value || "8", 10);
+    const poolN = parseInt(document.getElementById("pool_n").value || "64", 10);
+
+    const status = document.getElementById("odds_status");
+    const summary = document.getElementById("odds_summary");
+    const piePreview = document.getElementById("pie_preview");
+    const tableWrap = document.getElementById("odds_table_wrap");
+
+    status.textContent = "Loading...";
+    summary.innerHTML = "";
+    piePreview.innerHTML = "";
+    tableWrap.innerHTML = "";
+
+    try {
+      const url = `/api/tournament_odds?event_short=${encodeURIComponent(eventShort)}&top_k=${encodeURIComponent(topK)}&pool_n=${encodeURIComponent(poolN)}`;
+      const data = await fetchJSON(url);
+
+      status.textContent = "";
+
+      summary.innerHTML = `
+        <div class="muted">
+          <b>${esc(data.event_short)}</b> — ${esc(data.tourney_name)} (${esc(data.surface)})
+        </div>
+      `;
+
+      // Pie preview (simple stacked bars)
+      const pie = data.pie || [];
+      renderPie(pie);
+      let pieHtml = "";
+      if (pie.length === 0) {
+        pieHtml = "<div class='muted'>No data returned.</div>";
+      } else {
+        pieHtml += `<div style="display:flex; height:18px; width:100%; border-radius:10px; overflow:hidden; border:1px solid rgba(0,0,0,0.08);">`;
+        for (const slice of pie) {
+          const w = Math.max(0, slice.p * 100);
+          pieHtml += `<div title="${esc(slice.label)}: ${pct(slice.p)}" style="width:${w}%; background: rgba(0,0,0,0.12);"></div>`;
+        }
+        pieHtml += `</div>`;
+
+        pieHtml += `<div class="muted" style="margin-top:8px;">`;
+        for (const slice of pie) {
+          pieHtml += `<div>${esc(slice.label)} — <b>${pct(slice.p)}</b></div>`;
+        }
+        pieHtml += `</div>`;
+      }
+      piePreview.innerHTML = pieHtml;
+
+      // Detail table
+      const top = data.top_detail || [];
+      if (top.length === 0) {
+        tableWrap.innerHTML = "<div class='muted'>No top_detail returned.</div>";
+        return;
+      }
+
+      let rows = "";
+      for (const r of top) {
+        rows += `
+          <tr>
+            <td>${esc(r.player)}</td>
+            <td>${pct(r.p)}</td>
+            <td>${Number(r.surface_elo).toFixed(1)}</td>
+            <td>${Number(r.overall_elo).toFixed(1)}</td>
+            <td>${esc(r.event_wins)}-${esc(r.event_losses)}</td>
+            <td>${Number(r.event_bonus_elo).toFixed(1)}</td>
+          </tr>
+        `;
+      }
+
+      tableWrap.innerHTML = `
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Player</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Win %</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Surface Elo</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Overall Elo</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Event record</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Event bonus (Elo)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      `;
+
+    } catch (err) {
+      status.textContent = "Error: " + (err?.message || String(err));
+    }
+  }
+
+  // ---------------- H2H ----------------
+  async function computeH2H() {
+    const a = document.getElementById("h2h_a").value.trim();
+    const b = document.getElementById("h2h_b").value.trim();
+    const s = document.getElementById("h2h_surface").value.trim();
+    const t = document.getElementById("h2h_tourney").value.trim();
+
+    const status = document.getElementById("h2h_status");
+    const out = document.getElementById("h2h_result");
+
+    status.textContent = "";
+    out.innerHTML = "";
+
+    if (!a || !b) {
+      status.textContent = "Enter both player names.";
+      return;
+    }
+
+    status.textContent = "Loading...";
+
+    try {
+      let url = `/api/h2h?player_a=${encodeURIComponent(a)}&player_b=${encodeURIComponent(b)}&surface=${encodeURIComponent(s)}`;
+      if (t) url += `&tourney_name=${encodeURIComponent(t)}`;
+
+      const data = await fetchJSON(url);
+      status.textContent = "";
+
+      const bd = data.breakdown || {};
+      const winner = (data.p_a >= data.p_b) ? data.player_a : data.player_b;
+      const winp = Math.max(data.p_a, data.p_b);
+
+      out.innerHTML = `
+        <div style="padding:12px; border:1px solid rgba(0,0,0,0.08); border-radius:10px;">
+          <div style="font-size:18px;"><b>${esc(winner)}</b> favored</div>
+          <div class="muted" style="margin-top:6px;">
+            ${esc(data.player_a)}: <b>${pct(data.p_a)}</b> &nbsp;|&nbsp;
+            ${esc(data.player_b)}: <b>${pct(data.p_b)}</b>
+          </div>
+          <div class="muted" style="margin-top:6px;">
+            Surface: ${esc(data.surface)} ${t ? " | Tournament: " + esc(t) : ""}
+          </div>
+        </div>
+
+        <h4 style="margin-top:14px;">Breakdown</h4>
+        <table style="width:100%; border-collapse:collapse;">
+          <tbody>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">A blended (0.75*s + 0.25*o)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.a_blend).toFixed(1)}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">B blended (0.75*s + 0.25*o)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.b_blend).toFixed(1)}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">A surface / overall Elo</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.a_surface_elo).toFixed(1)} / ${Number(bd.a_overall_elo).toFixed(1)}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">B surface / overall Elo</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.b_surface_elo).toFixed(1)} / ${Number(bd.b_overall_elo).toFixed(1)}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">H2H (surface)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${bd.a_h2h_surface}-${bd.b_h2h_surface}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">H2H (all)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${bd.a_h2h_all}-${bd.b_h2h_all}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">H2H edge (Elo)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.h2h_edge_elo).toFixed(1)}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">Event edge (Elo)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.event_edge_elo).toFixed(1)}</td></tr>
+            <tr><td style="padding:6px 8px;">Final Elo diff</td><td style="padding:6px 8px;">${Number(bd.final_elo_diff).toFixed(1)}</td></tr>
+          </tbody>
+        </table>
+      `;
+
+    } catch (err) {
+      status.textContent = "Error: " + (err?.message || String(err));
+    }
+  }
+
+  document.getElementById("btn_odds").addEventListener("click", computeOdds);
+  document.getElementById("btn_h2h").addEventListener("click", computeH2H);
+
+  // Auto-run odds once on load (nice UX)
+  window.addEventListener("load", () => {
+    computeOdds();
+  });
+</script>
+
+{% endblock %}

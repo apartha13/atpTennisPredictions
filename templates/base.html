@@ -129,8 +129,15 @@
             color: var(--text-muted);
             font-size: 0.9rem;
           }
+          .pie {
+            max-width: 480px;  
+            max-height: 480px;
+            margin: 12px auto;
+            display: block;
+          }
         </style>
       </head>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <body>
   <header>
     <div>
@@ -141,6 +148,8 @@
       <a href="/">Standings</a>
       <a href="/breakdown">Breakdown</a>
       <a href="/picks">Enter Picks</a>
+      <a href="/model">Model</a>
+      <a href="/predict">Predict</a>
       <a href="/results">Enter Results</a>
     </nav>
   </header>

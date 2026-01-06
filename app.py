@@ -6,6 +6,9 @@ from sqlalchemy import create_engine, text
 from typing import Optional
 from urllib.parse import urlencode 
 from fastapi.staticfiles import StaticFiles
+from ml_update import update_model
+from ml_update import update_model, predict_h2h, tournament_odds_no_draw
+
 
 # --- League config ---
 EVENTS_13 = [
@@ -40,6 +43,21 @@ EVENTS_ORDERED = [
     ("PAR", "Paris", "masters"),
 ]
 
+EVENT_META = {
+    "AO":  {"tourney_name": "Australian Open", "surface": "Hard"},
+    "IW":  {"tourney_name": "Indian Wells Masters", "surface": "Hard"},
+    "MIA": {"tourney_name": "Miami Masters", "surface": "Hard"},
+    "MON": {"tourney_name": "Monte Carlo Masters", "surface": "Clay"},
+    "MAD": {"tourney_name": "Madrid Masters", "surface": "Clay"},
+    "ROM": {"tourney_name": "Rome Masters", "surface": "Clay"},
+    "RG":  {"tourney_name": "Roland Garros", "surface": "Clay"},
+    "WIM": {"tourney_name": "Wimbledon", "surface": "Grass"},
+    "CAN": {"tourney_name": "Canada Masters", "surface": "Hard"},
+    "CIN": {"tourney_name": "Cincinnati Masters", "surface": "Hard"},
+    "USO": {"tourney_name": "US Open", "surface": "Hard"},
+    "SHA": {"tourney_name": "Shanghai Masters", "surface": "Hard"},
+    "PAR": {"tourney_name": "Paris Masters", "surface": "Hard"},
+}
 
 ALLOWED_ROUNDS = ["W", "F", "SF", "QF", "R16", "R32", "R64", "R128"]
 
@@ -67,14 +85,15 @@ def init_db() -> None:
         """))
 
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS events (
-          id TEXT PRIMARY KEY,         -- e.g., AO2026
-          short_id TEXT NOT NULL,      -- AO
-          name TEXT NOT NULL,
-          level TEXT NOT NULL,
-          year INT NOT NULL
-        );
-        """))
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,         -- e.g., AO2026
+  short_id TEXT NOT NULL,      -- AO
+  name TEXT NOT NULL,
+  level TEXT NOT NULL,
+  sort_order INT NOT NULL,
+  year INT NOT NULL
+);
+"""))
 
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS predictions (
@@ -94,6 +113,73 @@ def init_db() -> None:
           round_reached TEXT NOT NULL,
           PRIMARY KEY (event_id, player_name),
           FOREIGN KEY (event_id) REFERENCES events(id)
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS matches (
+        match_key TEXT PRIMARY KEY,
+        tourney_id TEXT,
+        tourney_name TEXT,
+        tourney_level TEXT,
+        surface TEXT,
+        tourney_date INT,
+        match_num INT,
+        round TEXT,
+        winner_name TEXT,
+        loser_name TEXT,
+        score TEXT,
+        minutes INT
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS elo_overall (
+        player_name TEXT PRIMARY KEY,
+        elo NUMERIC NOT NULL,
+        matches_played INT NOT NULL DEFAULT 0,
+        last_updated TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS elo_surface (
+        player_name TEXT NOT NULL,
+        surface TEXT NOT NULL,
+        elo NUMERIC NOT NULL,
+        matches_played INT NOT NULL DEFAULT 0,
+        last_updated TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (player_name, surface)
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS h2h (
+        player_lo TEXT NOT NULL,
+        player_hi TEXT NOT NULL,
+        surface   TEXT NOT NULL,
+        lo_wins   INT  NOT NULL DEFAULT 0,
+        hi_wins   INT  NOT NULL DEFAULT 0,
+        last_match_date INT NULL,
+        PRIMARY KEY (player_lo, player_hi, surface)
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS player_event_record (
+        player_name TEXT NOT NULL,
+        event_key   TEXT NOT NULL,
+        wins        INT  NOT NULL DEFAULT 0,
+        losses      INT  NOT NULL DEFAULT 0,
+        last_played_date INT NULL,
+        PRIMARY KEY (player_name, event_key)
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS model_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
         );
         """))
 
@@ -323,6 +409,99 @@ def breakdown_page(request: Request, event_id: Optional[str] = Query(default=Non
         "events": events,                     
         "selected_event_id": event_id or "",  
         "breakdown": breakdown,
+    })
+
+@app.get("/model", response_class=HTMLResponse)
+def model_page(request: Request):
+    with engine.begin() as conn:
+        last = conn.execute(text("SELECT value FROM model_state WHERE key='last_model_update_at';")).fetchone()
+        last = last[0] if last else "Never"
+
+        backfill = conn.execute(text("SELECT value FROM model_state WHERE key='last_backfill';")).fetchone()
+        backfill = backfill[0] if backfill else "Not run"
+
+        match_count = conn.execute(text("SELECT COUNT(*) FROM matches;")).fetchone()[0]
+        elo_count = conn.execute(text("SELECT COUNT(*) FROM elo_surface;")).fetchone()[0]
+
+    return templates.TemplateResponse("model.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "last_update": last,
+        "backfill_range": backfill,
+        "match_count": match_count,
+        "elo_count": elo_count,
+    })
+
+
+@app.post("/model/update")
+def model_update(commissioner_key: str = Form(...)):
+    if commissioner_key != COMMISSIONER_KEY:
+        raise HTTPException(403, "Wrong commissioner key.")
+
+    START_YEAR = 2022
+    END_YEAR = 2025
+
+    with engine.begin() as conn:
+        print("[ML] update button clicked — starting update_model()")
+        update_model(conn, START_YEAR, END_YEAR)
+
+    return RedirectResponse("/model", status_code=303)
+
+@app.get("/api/h2h")
+def api_h2h(
+    player_a: str,
+    player_b: str,
+    surface: str = "Hard",
+    tourney_name: Optional[str] = None,
+):
+    with engine.begin() as conn:
+        return predict_h2h(conn, player_a.strip(), player_b.strip(), surface.strip(), tourney_name=tourney_name)
+
+@app.get("/api/tournament_odds")
+def api_tournament_odds(
+    event_short: str,
+    top_k: int = 10,
+    pool_n: int = 64,
+):
+    key = (event_short or "").strip().upper()
+    if key not in EVENT_META:
+        raise HTTPException(400, f"Unknown event_short. Use one of: {sorted(EVENT_META.keys())}")
+
+    meta = EVENT_META[key]
+
+    with engine.begin() as conn:
+        odds = tournament_odds_no_draw(conn, meta["tourney_name"], meta["surface"], pool_n=int(pool_n))
+
+    # Make pie-chart friendly: top_k + Other
+    top_k = max(1, int(top_k))
+    head = odds[:top_k]
+    tail = odds[top_k:]
+
+    other_p = sum(x["p"] for x in tail)
+    pie = [{"label": x["player"], "p": float(x["p"])} for x in head]
+    if other_p > 0:
+        pie.append({"label": "Other", "p": float(other_p)})
+
+    # normalize
+    total = sum(x["p"] for x in pie) or 1.0
+    for x in pie:
+        x["p"] = float(x["p"] / total)
+
+    return {
+        "event_short": key,
+        "tourney_name": meta["tourney_name"],
+        "surface": meta["surface"],
+        "pie": pie,          # PERFECT for a pie chart
+        "top_detail": head,  # includes elos + record bonus + etc
+    }
+
+@app.get("/predict", response_class=HTMLResponse)
+def predict_page(request: Request):
+    return templates.TemplateResponse("predict.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "events": get_events(),          # existing helper you already have
+        "event_meta": EVENT_META,        # the dict you added earlier
     })
 
 @app.get("/results", response_class=HTMLResponse)

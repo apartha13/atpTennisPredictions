@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h3 style="margin-top:0;">Model Status</h3>
+  <div class="muted">Backfill range: {{ backfill_range }}</div>
+  <div class="muted">Matches in DB: {{ match_count }}</div>
+  <div class="muted">Elo rows: {{ elo_count }}</div>
+  <div class="muted">Last model update: {{ last_update }}</div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Update Model (Commissioner)</h3>
+  <form action="/model/update" method="post">
+    <input name="commissioner_key" placeholder="Commissioner key" required />
+    <button type="submit">Run update (backfill + Elo)</button>
+  </form>
+  <div class="muted" style="margin-top:8px;">
+    First run may take a bit because it downloads and ingests 15 seasons.
+    Later runs will be faster (years already backfilled are skipped).
+  </div>
+</div>
+
+{% endblock %}
