@@ -364,6 +364,12 @@ def home(request: Request):
         "totals": totals,
     })
 
+@app.get("/help", response_class=HTMLResponse)
+def help_page(request: Request):
+    return templates.TemplateResponse("help.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+    })
 
 @app.post("/add_person")
 def add_person(name: str = Form(...)):
@@ -488,6 +494,14 @@ def api_h2h(
     with engine.begin() as conn:
         a = normalize_name(player_a)
         b = normalize_name(player_b)
+        
+        # Same player is not accepted
+        if a == b:
+            raise HTTPException(
+            status_code=422,
+            detail=f"Player '{a}' cannot be used in both fields."
+            )
+
         assert_player_exists(conn, a)
         assert_player_exists(conn, b)
         return predict_h2h(conn, a, b, surface.strip(), tourney_name=tourney_name)
