@@ -5,7 +5,7 @@
   <h3 style="margin-top:0;">Enter / Update Results (Commissioner Only)</h3>
   <form action="/results" method="post">
     <label class="muted">Commissioner key</label><br/>
-    <input name="commissioner_key" type="password" placeholder="(Ajay Only)" required />
+    <input name="commissioner_key" type="password" placeholder="(Admin Only)" required />
 
     <br/><br/>
     <label class="muted">Event</label><br/>
@@ -17,7 +17,7 @@
 
     <br/><br/>
     <label class="muted">Player</label><br/>
-    <input name="player" placeholder="Exact spelling used in picks" required />
+    <input id="result_player" name="player" placeholder="Exact spelling used in picks" required />
 
     <br/><br/>
     <label class="muted">Round reached</label><br/>
@@ -35,5 +35,7 @@
     Enter results only for players that someone picked. Submitting again overwrites the saved round.
   </p>
 </div>
-
+<script>
+    wirePlayerAutocomplete("result_player", "/api/players");
+  </script>
 {% endblock %}

@@ -26,15 +26,17 @@
 
     <br/><br/>
     <label class="muted">Player</label><br/>
-    <input name="player" placeholder="e.g., Jannik Sinner" required />
+    <input id="pick_player" name="player" placeholder="e.g., Jannik Sinner" required />
 
     <br/><br/>
     <button type="submit">Save Pick</button>
   </form>
 
   <p class="muted" style="margin-bottom:0;">
-    One pick per event. Submitting again overwrites your previous pick for that event. Picks need to be made at beginning of the year, but with a withdrawal or injury, a re-pick will be allowed.
+    One pick per event. Submitting again overwrites your previous pick for that event. 
   </p>
 </div>
-
+<script>
+    wirePlayerAutocomplete("pick_player", "/api/players");
+  </script>
 {% endblock %}

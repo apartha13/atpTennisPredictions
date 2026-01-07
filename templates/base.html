@@ -42,6 +42,51 @@
             gap: 16px;
             margin-bottom: 12px;
           }
+
+          .nav-dropdown {
+            position: relative;
+            display: inline-block;
+            }
+
+            .nav-dropdown button {
+            margin-top: 0;
+            padding: 0;
+            background: transparent;
+            color: var(--text-white);
+            border: none;
+            font-weight: 500;
+            cursor: pointer;
+            font-size: 1rem;
+            }
+
+            .nav-menu {
+            position: absolute;
+            right: 0;
+            top: 26px;
+            min-width: 180px;
+            background: #fff;
+            color: #111;
+            border-radius: 12px;
+            border: 1px solid rgba(0,0,0,0.15);
+            box-shadow: 0 12px 30px rgba(0,0,0,0.12);
+            padding: 6px;
+            display: none;
+            z-index: 9999;
+            }
+
+            .nav-menu a {
+            display: block;
+            padding: 10px 12px;
+            margin: 0;
+            color: #111;
+            text-decoration: none;
+            border-radius: 10px;
+            font-weight: 600;
+            }
+
+            .nav-menu a:hover {
+            background: rgba(0,0,0,0.06);
+            }
       
           nav a {
             color: var(--text-white);
@@ -81,7 +126,7 @@
             text-align: left;
           }
       
-          th {
+          th { 
             font-weight: 600;
             color: var(--text-white);
           }
@@ -135,9 +180,126 @@
             margin: 12px auto;
             display: block;
           }
+
+          .autocomplete-box{
+            position:absolute;
+            z-index:9999;
+            background:#fff;
+            color:#111;                     
+            border:1px solid rgba(0,0,0,0.15);
+            border-radius:10px;
+            margin-top:4px;
+            max-height:220px;
+            overflow-y:auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+            display:none;
+            }
+                    
+            .autocomplete-item{
+            padding:10px 12px;
+            cursor:pointer;
+            color:#111;                   
+            }
+
+            .autocomplete-item:hover{
+            background: rgba(0,0,0,0.06);
+            }
         </style>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script>
+            async function wireAutocomplete(inputId, apiPath) {
+              const input = document.getElementById(inputId);
+              if (!input) return;
+            
+              input.setAttribute("autocomplete", "off");
+            
+              const box = document.createElement("div");
+              box.className = "autocomplete-box";
+              document.body.appendChild(box);
+            
+              function positionBox() {
+                const r = input.getBoundingClientRect();
+                box.style.left = (window.scrollX + r.left) + "px";
+                box.style.top  = (window.scrollY + r.bottom) + "px";
+                box.style.width = r.width + "px";
+              }
+            
+              let controller = null;
+                let lastQ = "";
+                let debounceTimer = null;
+                let reqSeq = 0;          // increments per request
+                let lastRenderedSeq = 0; // only render latest
+
+                async function runSearch(q, mySeq) {
+                if (controller) controller.abort();
+                controller = new AbortController();
+
+                positionBox();
+                box.innerHTML = `<div class="autocomplete-item" style="color:#666;">Searching…</div>`;
+                box.style.display = "block";
+
+                try {
+                    const res = await fetch(`${apiPath}?q=${encodeURIComponent(q)}&limit=12`, {
+                    signal: controller.signal
+                    });
+                    const names = await res.json();
+
+                    // ✅ stale response guard (prevents out-of-order rendering)
+                    if (mySeq < reqSeq) return;
+
+                    lastRenderedSeq = mySeq;
+
+                    if (!Array.isArray(names) || names.length === 0) {
+                    box.innerHTML = `<div class="autocomplete-item" style="color:#666;">No matches</div>`;
+                    return;
+                    }
+
+                    box.innerHTML = "";
+                    for (const name of names) {
+                    const item = document.createElement("div");
+                    item.className = "autocomplete-item";
+                    item.textContent = name;
+                    item.onmousedown = (e) => {
+                        e.preventDefault();
+                        input.value = name;
+                        box.style.display = "none";
+                    };
+                    box.appendChild(item);
+                    }
+                } catch (e) {
+                    // ignore aborts, hide on real errors
+                    if (e.name !== "AbortError") box.style.display = "none";
+                }
+                }
+
+                function update() {
+                const q = (input.value || "").trim();
+                if (q.length < 2) { box.style.display = "none"; return; }
+                if (q === lastQ) return;
+                lastQ = q;
+
+                // ✅ debounce (wait briefly after typing stops)
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    reqSeq += 1;
+                    runSearch(q, reqSeq);
+                }, 150);
+                }
+            
+              input.addEventListener("input", update);
+              input.addEventListener("focus", () => { positionBox(); update(); });
+            
+              window.addEventListener("resize", positionBox);
+              window.addEventListener("scroll", positionBox);
+            
+              input.addEventListener("blur", () => {
+                setTimeout(() => box.style.display = "none", 150);
+              });
+            }
+            </script>
+            
       </head>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            
 <body>
   <header>
     <div>
@@ -145,15 +307,39 @@
       <div class="muted">Season {{year}}</div>
     </div>
     <nav>
-      <a href="/">Standings</a>
-      <a href="/breakdown">Breakdown</a>
-      <a href="/picks">Enter Picks</a>
-      <a href="/model">Model</a>
-      <a href="/predict">Predict</a>
-      <a href="/results">Enter Results</a>
-    </nav>
+        <a href="/">Standings</a>
+        <a href="/help">Help</a>
+        <a href="/breakdown">Breakdown</a>
+        <a href="/picks">Enter Picks</a>
+        <a href="/predict">Predict</a>
+      
+        <div class="nav-dropdown">
+          <button type="button" id="commBtn">Admin ▾</button>
+          <div class="nav-menu" id="commMenu">
+            <a href="/model">Model</a>
+            <a href="/results">Enter Results</a>
+          </div>
+        </div>
+      </nav>
   </header>
   <hr/>
   {% block content %}{% endblock %}
+  <script>
+    (function () {
+      const btn = document.getElementById("commBtn");
+      const menu = document.getElementById("commMenu");
+      if (!btn || !menu) return;
+  
+      btn.addEventListener("click", () => {
+        menu.style.display = (menu.style.display === "block") ? "none" : "block";
+      });
+  
+      document.addEventListener("click", (e) => {
+        if (!menu.contains(e.target) && !btn.contains(e.target)) {
+          menu.style.display = "none";
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

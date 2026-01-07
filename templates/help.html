@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h3 style="margin-top:0;">How to Use This Site</h3>
+  <div class="muted">
+    This is our league tracker for the {{year}} ATP season. Use the tabs above to make picks,
+    view standings, and explore predictions.
+  </div>
+
+  <h4>Order of Exploring</h4>
+  <div class="muted">
+    Add your name on the Standings page in order to add your picks. Check out the Predict page to see who are the likely winners for each event and 
+    maybe check H2H. Make your predictions on the Enter Picks page and then check out your picks on the Breakdown page. Keep coming back to the website to 
+    see where you rank among your competitors!
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Tabs Overview</h3>
+
+  <h4>Standings</h4>
+  <div class="muted">
+    Shows the leaderboard for the season (total points). Add people here if they don’t show up yet.
+  </div>
+
+  <h4 style="margin-top:14px;">Breakdown</h4>
+  <div class="muted">
+    Shows each event and everyone’s pick, plus the result/points once entered.
+    Use this to see who picked what and where points came from.
+  </div>
+
+  <h4 style="margin-top:14px;">Enter Picks</h4>
+  <div class="muted">
+    Pick one player per event. Submitting again overwrites your previous pick for that event.
+    Use the dropdown suggestions when typing a player name to avoid spelling issues.
+  </div>
+
+  <h4 style="margin-top:14px;">Predict</h4>
+  <div class="muted">
+    Two tools:
+    <ul style="margin:6px 0 0 18px;">
+      <li><b>Tournament Odds</b>: gives win probabilities for top players (no draw bracket needed).</li>
+      <li><b>Head-to-head</b>: predicts a match winner using Elo + head-to-head + optional tournament history.</li>
+    </ul>
+  </div>
+
+  <h4 style="margin-top:14px;">Admin</h4>
+  <div class="muted">
+    Only the commissioner should use these:
+    <ul style="margin:6px 0 0 18px;">
+      <li><b>Model</b>: runs the data update + rebuilds Elo/H2H/event records.</li>
+      <li><b>Enter Results</b>: enters the round reached for picked players (used to compute points).</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">How Scoring Works</h3>
+  <div class="muted">
+    Points are awarded based on the round your picked player reached for each event.
+    The commissioner enters results, and your total updates automatically.
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Tips</h3>
+  <ul class="muted" style="margin:0 0 0 18px;">
+    <li>Use autocomplete suggestions when typing player names.</li>
+    <li>If a player name is rejected, it means it isn’t in the database spelling — pick from suggestions.</li>
+    <li>Standings updates after results are entered.</li>
+  </ul>
+</div>
+
+{% endblock %}
