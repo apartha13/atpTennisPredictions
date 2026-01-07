@@ -602,6 +602,8 @@ def predict_h2h(conn, player_a: str, player_b: str, surface: str, tourney_name: 
 
     event_edge = 0.0
     event_h2h_edge = 0.0
+    a_we = 0
+    b_we = 0
 
     if tourney_name:
         ek = build_event_key(tourney_name, s)
@@ -618,8 +620,8 @@ def predict_h2h(conn, player_a: str, player_b: str, surface: str, tourney_name: 
         p_h2h_e = smoothed_rate(a_we, b_we, prior=0.5, prior_games=4)
         event_h2h_edge = (p_h2h_e - 0.5) * 80.0   # tune this weight
 
-        diff = (a_blend - b_blend) + h2h_edge + event_edge + event_h2h_edge
-        p_a = expected_from_elodiff(diff)
+    diff = (a_blend - b_blend) + h2h_edge + event_edge + event_h2h_edge
+    p_a = expected_from_elodiff(diff)
 
     return {
         "player_a": player_a,
