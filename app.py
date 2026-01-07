@@ -85,15 +85,15 @@ def init_db() -> None:
         """))
 
         conn.execute(text("""
-CREATE TABLE IF NOT EXISTS events (
-  id TEXT PRIMARY KEY,         -- e.g., AO2026
-  short_id TEXT NOT NULL,      -- AO
-  name TEXT NOT NULL,
-  level TEXT NOT NULL,
-  sort_order INT NOT NULL,
-  year INT NOT NULL
-);
-"""))
+        CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,         -- e.g., AO2026
+        short_id TEXT NOT NULL,      -- AO
+        name TEXT NOT NULL,
+        level TEXT NOT NULL,
+        sort_order INT NOT NULL,
+        year INT NOT NULL
+        );
+        """))
 
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS predictions (
@@ -173,6 +173,18 @@ CREATE TABLE IF NOT EXISTS events (
         losses      INT  NOT NULL DEFAULT 0,
         last_played_date INT NULL,
         PRIMARY KEY (player_name, event_key)
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS h2h_event (
+        player_lo TEXT NOT NULL,
+        player_hi TEXT NOT NULL,
+        event_key  TEXT NOT NULL,
+        lo_wins    INT  NOT NULL DEFAULT 0,
+        hi_wins    INT  NOT NULL DEFAULT 0,
+        last_match_date INT NULL,
+        PRIMARY KEY (player_lo, player_hi, event_key)
         );
         """))
 

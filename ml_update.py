@@ -433,6 +433,46 @@ def backfill_event_record(conn) -> None:
     GROUP BY player_name, event_key;
     """))
 
+def backfill_h2h_event(conn) -> None:
+    """
+    H2H by (player pair, event_key).
+    event_key = LOWER(TRIM(tourney_name)) || '|' || COALESCE(surface,'Unknown')
+    """
+    conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS h2h_event (
+      player_lo TEXT NOT NULL,
+      player_hi TEXT NOT NULL,
+      event_key  TEXT NOT NULL,
+      lo_wins    INT  NOT NULL DEFAULT 0,
+      hi_wins    INT  NOT NULL DEFAULT 0,
+      last_match_date INT NULL,
+      PRIMARY KEY (player_lo, player_hi, event_key)
+    );
+    """))
+
+    conn.execute(text("TRUNCATE h2h_event;"))
+
+    base_where = """
+    WHERE winner_name IS NOT NULL
+      AND loser_name  IS NOT NULL
+      AND COALESCE(score, '') NOT ILIKE '%w/o%'
+      AND tourney_name IS NOT NULL
+    """
+
+    conn.execute(text(f"""
+    INSERT INTO h2h_event (player_lo, player_hi, event_key, lo_wins, hi_wins, last_match_date)
+    SELECT
+      LEAST(winner_name, loser_name) AS player_lo,
+      GREATEST(winner_name, loser_name) AS player_hi,
+      (LOWER(TRIM(tourney_name)) || '|' || COALESCE(surface,'Unknown')) AS event_key,
+      SUM(CASE WHEN winner_name = LEAST(winner_name, loser_name) THEN 1 ELSE 0 END) AS lo_wins,
+      SUM(CASE WHEN winner_name = GREATEST(winner_name, loser_name) THEN 1 ELSE 0 END) AS hi_wins,
+      MAX(tourney_date) AS last_match_date
+    FROM matches
+    {base_where}
+    GROUP BY 1,2,3;
+    """))
+
 def set_state(conn, key: str, value: str) -> None:
     conn.execute(text("""
         INSERT INTO model_state (key, value)
@@ -511,6 +551,23 @@ def get_h2h(conn, a: str, b: str, surface: str) -> tuple[int, int, int, int]:
     a_wa, b_wa = fetch("All")
     return a_ws, b_ws, a_wa, b_wa
 
+def get_h2h_event(conn, a: str, b: str, event_key: str) -> tuple[int, int]:
+    """
+    Returns (a_wins_event, b_wins_event) for this tournament+surface.
+    """
+    lo, hi, a_is_lo = canon_pair(a, b)
+    r = conn.execute(text("""
+        SELECT lo_wins, hi_wins
+        FROM h2h_event
+        WHERE player_lo=:lo AND player_hi=:hi AND event_key=:ek
+    """), {"lo": lo, "hi": hi, "ek": event_key}).fetchone()
+
+    if not r:
+        return (0, 0)
+
+    lo_w, hi_w = int(r[0] or 0), int(r[1] or 0)
+    return (lo_w, hi_w) if a_is_lo else (hi_w, lo_w)
+
 def get_event_record(conn, player: str, event_key: str) -> tuple[int, int]:
     r = conn.execute(text("""
         SELECT wins, losses
@@ -544,16 +601,25 @@ def predict_h2h(conn, player_a: str, player_b: str, surface: str, tourney_name: 
     h2h_edge = (p_h2h_s - 0.5) * 120.0 + (p_h2h_a - 0.5) * 40.0
 
     event_edge = 0.0
+    event_h2h_edge = 0.0
+
     if tourney_name:
         ek = build_event_key(tourney_name, s)
+
+        # your existing event record edge
         a_w, a_l = get_event_record(conn, player_a, ek)
         b_w, b_l = get_event_record(conn, player_b, ek)
         a_r = smoothed_rate(a_w, a_l, prior=0.5, prior_games=10)
         b_r = smoothed_rate(b_w, b_l, prior=0.5, prior_games=10)
-        event_edge = (a_r - b_r) * 35.0
+        event_edge = (a_r - b_r) * 45.0
 
-    diff = (a_blend - b_blend) + h2h_edge + event_edge
-    p_a = expected_from_elodiff(diff)
+        # ✅ NEW: event-specific H2H edge (only matches at this tournament+surface)
+        a_we, b_we = get_h2h_event(conn, player_a, player_b, ek)
+        p_h2h_e = smoothed_rate(a_we, b_we, prior=0.5, prior_games=4)
+        event_h2h_edge = (p_h2h_e - 0.5) * 80.0   # tune this weight
+
+        diff = (a_blend - b_blend) + h2h_edge + event_edge + event_h2h_edge
+        p_a = expected_from_elodiff(diff)
 
     return {
         "player_a": player_a,
@@ -572,8 +638,11 @@ def predict_h2h(conn, player_a: str, player_b: str, surface: str, tourney_name: 
             "b_h2h_surface": int(b_ws),
             "a_h2h_all": int(a_wa),
             "b_h2h_all": int(b_wa),
+            "event_h2h_a_wins": int(a_we),
+            "event_h2h_b_wins": int(b_we),
             "h2h_edge_elo": float(h2h_edge),
             "event_edge_elo": float(event_edge),
+            "event_h2h_edge_elo": float(event_h2h_edge),
             "final_elo_diff": float(diff),
         }
     }
@@ -661,10 +730,10 @@ def tournament_odds_no_draw(conn, tourney_name: str, surface: str, pool_n: int =
 
 def update_model(conn, start_year: int, end_year: int) -> None:
     print("[ML] backfill_years start")
-    backfill_years(conn, start_year, end_year)
+    #backfill_years(conn, start_year, end_year)
 
     print("[ML] recompute_elos start")
-    recompute_elos(conn, write_per_match_elos=False)
+    #recompute_elos(conn, write_per_match_elos=False)
 
     print("[ML] backfill_h2h start")
     backfill_h2h(conn)
@@ -672,6 +741,9 @@ def update_model(conn, start_year: int, end_year: int) -> None:
     print("[ML] backfill_event_record start")
     backfill_event_record(conn)
     print("[ML] backfill_event_record done")
+
+    print("[ML] backfill_h2h_event start")
+    backfill_h2h_event(conn)
 
     print("[ML] done — writing state")
     set_state(conn, "last_model_update_at", datetime.utcnow().isoformat() + "Z")
