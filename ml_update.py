@@ -367,10 +367,11 @@ def build_event_key(tourney_name: str | None, surface: str | None) -> str:
     """
     Stable across years. Does NOT include tourney_level.
     """
-    n = (tourney_name or "").strip().lower() 
+    n = (tourney_name or "").strip().lower()
     if n == "shanghai":
         n = "shanghai masters"
-        n = n or "unknown"
+    n = n or "unknown"
+
     s = (surface or "Unknown").strip()
     return f"{n}|{s}"
 
@@ -581,12 +582,13 @@ def tournament_odds_no_draw(conn, tourney_name: str, surface: str, pool_n: int =
     """
     Returns pie-chart-ready probabilities that sum to 1.0.
     Candidate pool = top N by surface Elo on that surface.
-    Strength = 85% surface Elo + 15% overall Elo + small event record bonus.
+    Strength = 70% surface Elo + 30% overall Elo + small event record bonus.
+    Uses BATCHED queries to avoid DB timeouts.
     """
     s = (surface or "Unknown").strip()
     ek = build_event_key(tourney_name, s)
 
-    # pick a pool of likely entrants
+    # 1) pick a pool of likely entrants (1 query)
     rows = conn.execute(text("""
         SELECT player_name
         FROM elo_surface
@@ -595,21 +597,45 @@ def tournament_odds_no_draw(conn, tourney_name: str, surface: str, pool_n: int =
         LIMIT :n
     """), {"s": s, "n": int(pool_n)}).fetchall()
     players = [r[0] for r in rows]
+    if not players:
+        return []
+
+    # 2) batch fetch overall elos (1 query)
+    overall_rows = conn.execute(text("""
+        SELECT player_name, elo
+        FROM elo_overall
+        WHERE player_name = ANY(:players)
+    """), {"players": players}).fetchall()
+    overall_map = {r[0]: float(r[1]) for r in overall_rows}
+
+    # 3) batch fetch surface elos (1 query)
+    surface_rows = conn.execute(text("""
+        SELECT player_name, elo
+        FROM elo_surface
+        WHERE surface=:s AND player_name = ANY(:players)
+    """), {"s": s, "players": players}).fetchall()
+    surface_map = {r[0]: float(r[1]) for r in surface_rows}
+
+    # 4) batch fetch event records for that event_key (1 query)
+    rec_rows = conn.execute(text("""
+        SELECT player_name, wins, losses
+        FROM player_event_record
+        WHERE event_key = :ek AND player_name = ANY(:players)
+    """), {"ek": ek, "players": players}).fetchall()
+    rec_map = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in rec_rows}
 
     strengths = []
     for p in players:
-        p_s, p_o = get_elos(conn, p, s)
+        p_s = float(surface_map.get(p, 1500.0))
+        p_o = float(overall_map.get(p, 1500.0))
         blend = 0.70 * p_s + 0.30 * p_o
 
-        w, l = get_event_record(conn, p, ek)
+        w, l = rec_map.get(p, (0, 0))
         r = smoothed_rate(w, l, prior=0.5, prior_games=10)
         rec_bonus = (r - 0.5) * 200.0
 
         strength = blend + rec_bonus
-        strengths.append((p, float(strength), float(p_s), float(p_o), int(w), int(l), float(rec_bonus)))
-
-    if not strengths:
-        return []
+        strengths.append((p, float(strength), p_s, p_o, int(w), int(l), float(rec_bonus)))
 
     # softmax
     max_s = max(x[1] for x in strengths)
@@ -622,12 +648,12 @@ def tournament_odds_no_draw(conn, tourney_name: str, surface: str, pool_n: int =
         out.append({
             "player": p,
             "p": float(e / total),
-            "surface_elo": p_s,
-            "overall_elo": p_o,
-            "event_wins": w,
-            "event_losses": l,
-            "event_bonus_elo": rec_bonus,
-            "strength": strength,
+            "surface_elo": float(p_s),
+            "overall_elo": float(p_o),
+            "event_wins": int(w),
+            "event_losses": int(l),
+            "event_bonus_elo": float(rec_bonus),
+            "strength": float(strength),
         })
 
     out.sort(key=lambda d: d["p"], reverse=True)

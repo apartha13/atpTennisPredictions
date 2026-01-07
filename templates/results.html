@@ -17,7 +17,7 @@
 
     <br/><br/>
     <label class="muted">Player</label><br/>
-    <input name="player" placeholder="Exact spelling used in picks" required />
+    <input id="result_player" name="player" placeholder="Exact spelling used in picks" required />
 
     <br/><br/>
     <label class="muted">Round reached</label><br/>
@@ -35,5 +35,7 @@
     Enter results only for players that someone picked. Submitting again overwrites the saved round.
   </p>
 </div>
-
+<script>
+    wirePlayerAutocomplete("result_player", "/api/players");
+  </script>
 {% endblock %}

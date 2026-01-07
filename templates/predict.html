@@ -26,12 +26,12 @@
     </div>
 
     <div style="min-width:120px;">
-      <label class="muted">Top K</label><br/>
-      <input id="top_k" type="number" value="8" min="1" max="30" style="width:100%; padding:8px;" />
+      <label class="muted">Top K Players (1-32)</label><br/>
+      <input id="top_k" type="number" value="8" min="1" max="32" style="width:100%; padding:8px;" />
     </div>
 
     <div style="min-width:120px;">
-      <label class="muted">Pool N</label><br/>
+      <label class="muted">Pool N Players (8-256)</label><br/>
       <input id="pool_n" type="number" value="64" min="8" max="256" style="width:100%; padding:8px;" />
     </div>
 
@@ -291,10 +291,10 @@ function renderPie(pie) {
         <h4 style="margin-top:14px;">Breakdown</h4>
         <table style="width:100%; border-collapse:collapse;">
           <tbody>
-            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">A blended (0.75*s + 0.25*o)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.a_blend).toFixed(1)}</td></tr>
-            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">B blended (0.75*s + 0.25*o)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.b_blend).toFixed(1)}</td></tr>
             <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">A surface / overall Elo</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.a_surface_elo).toFixed(1)} / ${Number(bd.a_overall_elo).toFixed(1)}</td></tr>
             <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">B surface / overall Elo</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.b_surface_elo).toFixed(1)} / ${Number(bd.b_overall_elo).toFixed(1)}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">Player A combined Elo</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.a_blend).toFixed(1)}</td></tr>
+            <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">Player B combined Elo</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.b_blend).toFixed(1)}</td></tr>
             <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">H2H (surface)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${bd.a_h2h_surface}-${bd.b_h2h_surface}</td></tr>
             <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">H2H (all)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${bd.a_h2h_all}-${bd.b_h2h_all}</td></tr>
             <tr><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">H2H edge (Elo)</td><td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${Number(bd.h2h_edge_elo).toFixed(1)}</td></tr>
@@ -316,6 +316,9 @@ function renderPie(pie) {
   window.addEventListener("load", () => {
     computeOdds();
   });
+  wireAutocomplete("h2h_a", "/api/players");
+  wireAutocomplete("h2h_b", "/api/players");
+  wireAutocomplete("h2h_tourney", "/api/tournaments");
 </script>
 
 {% endblock %}

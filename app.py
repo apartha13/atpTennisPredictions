@@ -225,6 +225,35 @@ def get_events():
     # list of dicts for templates
     return [{"id": r[0], "short_id": r[1], "name": r[2], "level": r[3]} for r in rows]
 
+def get_conn():
+    return engine.connect()
+
+def normalize_name(s: str) -> str:
+    return " ".join((s or "").strip().split())
+
+def player_exists(conn, name: str) -> bool:
+    name = normalize_name(name)
+    if not name:
+        return False
+    r = conn.execute(text("""
+        SELECT 1
+        FROM (
+          SELECT player_name FROM elo_overall
+          UNION
+          SELECT player_name FROM elo_surface
+        ) p
+        WHERE p.player_name = :n
+        LIMIT 1
+    """), {"n": name}).fetchone()
+    return bool(r)
+
+def assert_player_exists(conn, name: str):
+    if not player_exists(conn, name):
+        # 422 = “you sent a value but it’s invalid”
+        raise HTTPException(
+            status_code=422,
+            detail=f"Player '{name}' not found. Check spelling and pick from the dropdown suggestions."
+        )
 
 def points_case_sql() -> str:
     # Build a CASE expression from POINTS dict (keeps logic in one place)
@@ -374,12 +403,14 @@ def submit_pick(
 ):
     person = person.strip()
     event_id = event_id.strip()
-    player = player.strip()
+    player = normalize_name(player)
 
     if not (person and event_id and player):
         raise HTTPException(400, "Missing fields.")
 
     with engine.begin() as conn:
+        assert_player_exists(conn, player)
+
         # Ensure person exists (helps avoid “someone forgot to add Mom” errors)
         conn.execute(text("INSERT INTO people(name) VALUES (:n) ON CONFLICT (name) DO NOTHING;"), {"n": person})
 
@@ -455,7 +486,11 @@ def api_h2h(
     tourney_name: Optional[str] = None,
 ):
     with engine.begin() as conn:
-        return predict_h2h(conn, player_a.strip(), player_b.strip(), surface.strip(), tourney_name=tourney_name)
+        a = normalize_name(player_a)
+        b = normalize_name(player_b)
+        assert_player_exists(conn, a)
+        assert_player_exists(conn, b)
+        return predict_h2h(conn, a, b, surface.strip(), tourney_name=tourney_name)
 
 @app.get("/api/tournament_odds")
 def api_tournament_odds(
@@ -495,6 +530,43 @@ def api_tournament_odds(
         "top_detail": head,  # includes elos + record bonus + etc
     }
 
+@app.get("/api/players")
+def api_players(q: str = Query(default="", max_length=50), limit: int = 12):
+    q = (q or "").strip()
+    if len(q) < 2:
+        return []
+
+    with get_conn() as conn:
+        rows = conn.execute(text("""
+            SELECT player_name
+            FROM elo_overall
+            WHERE player_name ILIKE :pat
+            ORDER BY elo DESC
+            LIMIT :lim
+        """), {
+            "pat": f"%{q}%",
+            "lim": int(limit)
+        }).fetchall()
+
+    return [r[0] for r in rows]
+
+@app.get("/api/tournaments")
+def api_tournaments(q: str = Query("", min_length=1), limit: int = 12):
+    q = q.strip()
+    if not q:
+        return []
+
+    with get_conn() as conn:
+        rows = conn.execute(text("""
+            SELECT DISTINCT tourney_name
+            FROM matches
+            WHERE tourney_name ILIKE :q
+            ORDER BY tourney_name
+            LIMIT :limit
+        """), {"q": f"%{q}%", "limit": int(limit)}).fetchall()
+
+    return [r[0] for r in rows]
+
 @app.get("/predict", response_class=HTMLResponse)
 def predict_page(request: Request):
     return templates.TemplateResponse("predict.html", {
@@ -525,13 +597,14 @@ def submit_result(
         raise HTTPException(403, "Wrong commissioner key.")
 
     event_id = event_id.strip()
-    player = player.strip()
+    player = normalize_name(player)
     round_reached = round_reached.strip().upper()
 
     if round_reached not in ALLOWED_ROUNDS:
         raise HTTPException(400, f"Invalid round. Use one of: {ALLOWED_ROUNDS}")
 
     with engine.begin() as conn:
+        assert_player_exists(conn, player)
         conn.execute(text("""
           INSERT INTO results(event_id, player_name, round_reached)
           VALUES (:e, :pl, :r)
