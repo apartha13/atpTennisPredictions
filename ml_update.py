@@ -367,7 +367,10 @@ def build_event_key(tourney_name: str | None, surface: str | None) -> str:
     """
     Stable across years. Does NOT include tourney_level.
     """
-    n = (tourney_name or "").strip().lower() or "unknown"
+    n = (tourney_name or "").strip().lower() 
+    if n == "shanghai":
+        n = "shanghai masters"
+        n = n or "unknown"
     s = (surface or "Unknown").strip()
     return f"{n}|{s}"
 
