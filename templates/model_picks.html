@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h3 style="margin-top:0;">Model Picks</h3>
+  <div class="muted">Latest commissioner-generated model prediction for each event.</div>
+
+  <div style="margin-top:12px;">
+    <label class="muted">Event</label><br/>
+    <select id="event_sel" style="max-width:320px;">
+      {% for ev in events %}
+        <option value="{{ ev.short_id }}" {% if ev.short_id == selected_event_short %}selected{% endif %}>
+          {{ ev.short_id }} — {{ ev.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div class="card">
+  {% if not post %}
+    <div class="muted">No post yet for {{ selected_event_short }}. Commissioner needs to generate one.</div>
+  {% else %}
+    <h3 style="margin-top:0;">{{ post.title }}</h3>
+    <div class="muted">Generated at {{ post.created_at }}</div>
+
+    <h4 style="margin-top:18px;">Champion odds</h4>
+    <table>
+      <thead><tr><th>Player</th><th>Win %</th></tr></thead>
+      <tbody>
+      {% for r in post.content.title_odds %}
+        <tr><td>{{ r.player }}</td><td>{{ "%.1f"|format(r.p*100) }}%</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <h4 style="margin-top:18px;">Top upset spots (Round 1)</h4>
+    {% if post.content.upset_spots and post.content.upset_spots|length > 0 %}
+      <table>
+        <thead><tr><th>Match</th><th>Underdog</th><th>Upset %</th></tr></thead>
+        <tbody>
+        {% for u in post.content.upset_spots %}
+          <tr><td>{{ u.match }}</td><td>{{ u.underdog }}</td><td>{{ "%.1f"|format(u.p*100) }}%</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">None computed.</div>
+    {% endif %}
+
+    <h4 style="margin-top:18px;">Deterministic bracket (p ≥ 0.5 wins)</h4>
+    {% for rnd, matches in post.content.rounds_det.items() %}
+      <div style="margin-top:10px;"><b>{{ rnd }}</b></div>
+      <table>
+        <thead><tr><th>Match</th><th>P(A)</th><th>Winner</th></tr></thead>
+        <tbody>
+        {% for m in matches %}
+          <tr>
+            <td>{{ m.a }} vs {{ m.b }}</td>
+            <td>{{ "%.1f"|format(m.p_a*100) }}%</td>
+            <td><b>{{ m.winner }}</b></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endfor %}
+
+  {% endif %}
+</div>
+
+<script>
+  document.getElementById("event_sel").addEventListener("change", (e) => {
+    const ev = e.target.value;
+    window.location = `/model/picks?event_short=${encodeURIComponent(ev)}`;
+  });
+</script>
+
+{% endblock %}

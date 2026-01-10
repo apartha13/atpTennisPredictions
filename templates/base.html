@@ -87,6 +87,10 @@
             .nav-menu a:hover {
             background: rgba(0,0,0,0.06);
             }
+            
+            .nav-menu.open {
+              display: block;
+            }
       
           nav a {
             color: var(--text-white);
@@ -97,6 +101,15 @@
       
           nav a:hover {
             text-decoration: underline;
+          }
+
+          .nav-dropdown button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0;             /* or 2px 0 if you want a bigger click target */
+            margin: 0;
+            line-height: 1;
           }
       
           hr {
@@ -203,6 +216,48 @@
 
             .autocomplete-item:hover{
             background: rgba(0,0,0,0.06);
+            }
+              /* Autocomplete dropdown styling */
+            .sug-box {
+              background: #fff !important;
+              color: #111 !important;
+              border: 1px solid rgba(0,0,0,0.15) !important;
+            }
+
+            .sug-box .sug-item {
+              color: #111 !important;
+              background: #fff !important;
+            }
+
+            .sug-box .sug-item:hover {
+              background: rgba(0,0,0,0.06) !important;
+            }
+            /* Wrapper around each input + dropdown */
+            .ac-wrap {
+              position: relative;
+            }
+
+            /* The dropdown list */
+            .ac-list {
+              position: absolute;
+              left: 0;
+              right: 0;
+              top: calc(100% + 4px);
+              background: #fff;     /* IMPORTANT: opaque background so nothing shows through */
+              z-index: 9999;        /* IMPORTANT: above any underline/borders */
+              border-radius: 10px;
+              box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+              overflow: hidden;
+            }
+
+            /* If your underline is a pseudo element, force it below */
+            .ac-underline,
+            .ac-wrap::after {
+              z-index: 1;
+            }
+            .ac-input {
+              position: relative;
+              z-index: 2;
             }
         </style>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -311,13 +366,19 @@
         <a href="/help">Help</a>
         <a href="/breakdown">Breakdown</a>
         <a href="/picks">Enter Picks</a>
-        <a href="/predict">Predict</a>
-      
+        <div class="nav-dropdown">
+          <button type="button" id="modelBtn">Model ▾</button>
+          <div class="nav-menu" id="modelMenu">
+            <a href="/predict">Predict</a>
+            <a href="/model/picks">Model Picks</a>
+          </div>
+        </div>
         <div class="nav-dropdown">
           <button type="button" id="commBtn">Admin ▾</button>
           <div class="nav-menu" id="commMenu">
             <a href="/model">Model</a>
             <a href="/results">Enter Results</a>
+            <a href="/commissioner/bracket">Bracket Post</a>
           </div>
         </div>
       </nav>
@@ -325,21 +386,25 @@
   <hr/>
   {% block content %}{% endblock %}
   <script>
-    (function () {
-      const btn = document.getElementById("commBtn");
-      const menu = document.getElementById("commMenu");
-      if (!btn || !menu) return;
+    document.querySelectorAll(".nav-dropdown > button").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const menu = btn.nextElementSibling;
   
-      btn.addEventListener("click", () => {
-        menu.style.display = (menu.style.display === "block") ? "none" : "block";
-      });
+        // close other menus
+        document.querySelectorAll(".nav-menu").forEach((m) => {
+          if (m !== menu) m.classList.remove("open");
+        });
   
-      document.addEventListener("click", (e) => {
-        if (!menu.contains(e.target) && !btn.contains(e.target)) {
-          menu.style.display = "none";
-        }
+        // toggle this one
+        menu.classList.toggle("open");
+        e.stopPropagation();
       });
-    })();
-  </script>
+    });
+  
+    // click anywhere else closes all menus
+    document.addEventListener("click", () => {
+      document.querySelectorAll(".nav-menu").forEach((m) => m.classList.remove("open"));
+    });
+  </script>  
 </body>
 </html>

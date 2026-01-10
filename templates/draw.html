@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h3 style="margin-top:0;">Draw Simulator</h3>
+  <div class="muted">
+    Paste the draw in <b>bracket order</b>, one player per line.<br/>
+    Order matters: lines 1–2 are Match 1, 3–4 Match 2, etc. (A vs B, A vs B...)
+    <br/>Use <b>BYE</b> for byes. You can also type placeholders like <b>Q</b>, <b>Q1</b>, <b>LL</b>, <b>WC</b>.
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+    <div style="min-width:220px;">
+      <label class="muted">Event</label><br/>
+      <select id="event_short" style="width:100%; padding:8px;">
+        {% for ev in events %}
+          <option value="{{ ev.short_id }}">{{ ev.short_id }} — {{ ev.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div style="min-width:160px;">
+      <label class="muted">Surface</label><br/>
+      <select id="surface" style="width:100%; padding:8px;">
+        <option>Hard</option>
+        <option>Clay</option>
+        <option>Grass</option>
+        <option>Carpet</option>
+        <option>Unknown</option>
+      </select>
+    </div>
+
+    <div style="min-width:160px;">
+      <label class="muted">Draw size</label><br/>
+      <select id="draw_size" style="width:100%; padding:8px;">
+        <option value="32">32</option>
+        <option value="64" selected>64</option>
+        <option value="128">128</option>
+      </select>
+    </div>
+
+    <button id="btn_sim" type="button" style="padding:10px 14px;">Simulate</button>
+  </div>
+
+  <div style="margin-top:14px;">
+    <label class="muted">Players (one per line, in bracket order)</label><br/>
+    <textarea id="players_text" rows="14" style="width:100%; padding:10px;"
+      placeholder="Line 1 = Player A (Match 1)
+Line 2 = Player B (Match 1)
+Line 3 = Player A (Match 2)
+Line 4 = Player B (Match 2)
+...
+Use BYE for a bye."></textarea>
+  </div>
+
+  <div id="status" class="muted" style="margin-top:10px;"></div>
+  <div id="results" style="margin-top:16px;"></div>
+</div>
+
+<script>
+  function esc(s) {
+    return String(s || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  async function postForm(url, formData) {
+    const r = await fetch(url, { method: "POST", body: formData });
+    const text = await r.text();
+    if (!r.ok) throw new Error(text || ("HTTP " + r.status));
+    return JSON.parse(text);
+  }
+
+  function getPlayersList() {
+    const raw = document.getElementById("players_text").value || "";
+    return raw.split("\n").map(s => s.trim()).filter(Boolean);
+  }
+
+  function renderSimulation(data) {
+    let html = "";
+
+    // Champion odds
+    html += `<h4>Champion odds</h4>`;
+    html += `<table style="width:100%; border-collapse:collapse;">
+      <thead><tr>
+        <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Player</th>
+        <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Win %</th>
+      </tr></thead><tbody>`;
+
+    for (const r of (data.title_odds || [])) {
+      html += `<tr>
+        <td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${esc(r.player)}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${(Number(r.p)*100).toFixed(1)}%</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+
+    // Deterministic bracket (matchups)
+    const roundsDet = data.rounds_det || data.matches_det || null;
+    if (roundsDet) {
+      html += `<h4 style="margin-top:18px;">Deterministic bracket (p ≥ 0.5 wins)</h4>`;
+
+      for (const [rnd, matches] of Object.entries(roundsDet)) {
+        html += `<div style="margin-top:12px;">
+          <b>${esc(rnd)}</b>
+          <table style="width:100%; border-collapse:collapse; margin-top:6px;">
+            <thead><tr>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Match</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">P(A)</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Winner</th>
+            </tr></thead><tbody>`;
+
+        for (const m of (matches || [])) {
+          const pA = (Number(m.p_a) * 100).toFixed(1) + "%";
+          html += `<tr>
+            <td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">
+              ${esc(m.a)} <span class="muted">vs</span> ${esc(m.b)}
+            </td>
+            <td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${esc(pA)}</td>
+            <td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);"><b>${esc(m.winner)}</b></td>
+          </tr>`;
+        }
+
+        html += `</tbody></table></div>`;
+      }
+    }
+
+    // Per-round advancement odds
+    const roundAdv = data.round_adv || data.round_odds || null;
+    if (roundAdv) {
+      html += `<h4 style="margin-top:18px;">Per-round advancement odds (Monte Carlo)</h4>`;
+      html += `<div class="muted" style="margin-bottom:8px;">Top 12 players by chance to survive each round.</div>`;
+
+      for (const [rnd, mp] of Object.entries(roundAdv)) {
+        const arr = Object.entries(mp || {})
+          .map(([player, p]) => ({ player, p: Number(p) }))
+          .sort((a, b) => b.p - a.p)
+          .slice(0, 12);
+
+        html += `<div style="margin-top:12px;">
+          <b>${esc(rnd)}</b>
+          <table style="width:100%; border-collapse:collapse; margin-top:6px;">
+            <thead><tr>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">Player</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,0.1);">%</th>
+            </tr></thead><tbody>`;
+
+        for (const r of arr) {
+          html += `<tr>
+            <td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${esc(r.player)}</td>
+            <td style="padding:6px 8px; border-bottom:1px solid rgba(0,0,0,0.06);">${(r.p*100).toFixed(1)}%</td>
+          </tr>`;
+        }
+
+        html += `</tbody></table></div>`;
+      }
+    }
+
+    return html;
+  }
+
+  async function simulate() {
+    const status = document.getElementById("status");
+    const results = document.getElementById("results");
+    results.innerHTML = "";
+
+    const drawSize = parseInt(document.getElementById("draw_size").value, 10);
+    const surface = document.getElementById("surface").value;
+
+    const players = getPlayersList();
+
+    if (players.length !== drawSize) {
+      status.textContent = `Need exactly ${drawSize} lines. You pasted ${players.length}.`;
+      return;
+    }
+
+    // optional: sanity check pairs
+    for (let i = 0; i < players.length; i += 2) {
+      if ((players[i] || "").toLowerCase() === (players[i+1] || "").toLowerCase()) {
+        status.textContent = `Match ${(i/2)+1}: same player in both slots.`;
+        return;
+      }
+    }
+
+    status.textContent = "Simulating...";
+
+    try {
+      const fd = new FormData();
+      fd.append("players_text", players.join("\n"));
+      fd.append("surface", surface);
+      fd.append("tourney_level", "250");
+      fd.append("best_of", "3");
+      fd.append("tourney_date", "20250101");
+      fd.append("n_sims", "2000");
+      fd.append("seed", "42");
+
+      const data = await postForm("/api/simulate_draw", fd);
+
+      status.textContent = "";
+      results.innerHTML = renderSimulation(data);
+
+    } catch (e) {
+      console.error(e);
+      status.textContent = "Sim failed.";
+      results.innerHTML = `<div style="color:#b00020; white-space:pre-wrap;">${esc(String(e))}</div>`;
+    }
+  }
+
+  document.getElementById("btn_sim").addEventListener("click", simulate);
+</script>
+
+{% endblock %}

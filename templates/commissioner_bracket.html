@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h3 style="margin-top:0;">Commissioner — Generate Model Bracket Post</h3>
+  <div class="muted">Paste the official draw (one entry per line). Use BYE, Q, LL, WC if needed.</div>
+</div>
+
+<div class="card">
+  <form method="post" action="/commissioner/bracket/generate">
+    <label class="muted">Commissioner key</label>
+    <input name="commissioner_key" type="password" required />
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:12px;">
+      <div style="min-width:220px; flex:1;">
+        <label class="muted">Event</label>
+        <select name="event_short" style="width:100%;">
+          {% for ev in events %}
+            <option value="{{ ev.short_id }}">{{ ev.short_id }} — {{ ev.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div style="min-width:160px;">
+        <label class="muted">Surface</label>
+        <select name="surface" style="width:100%;">
+          <option>Hard</option><option>Clay</option><option>Grass</option><option>Unknown</option>
+        </select>
+      </div>
+
+      <div style="min-width:160px;">
+        <label class="muted">Level</label>
+        <select name="tourney_level" style="width:100%;">
+          <option value="G">G (Slam)</option>
+          <option value="M">M (Masters)</option>
+          <option value="500">500</option>
+          <option value="250">250</option>
+        </select>
+      </div>
+
+      <div style="min-width:140px;">
+        <label class="muted">Best of</label>
+        <select name="best_of" style="width:100%;">
+          <option value="5">5</option>
+          <option value="3" selected>3</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:12px;">
+      <div style="min-width:160px;">
+        <label class="muted">Sims</label>
+        <input name="n_sims" type="number" value="5000" min="200" step="100" />
+      </div>
+      <div style="min-width:160px;">
+        <label class="muted">Seed</label>
+        <input name="seed" type="number" value="42" />
+      </div>
+      <div style="min-width:160px;">
+        <label class="muted">Date (YYYYMMDD)</label>
+        <input name="tourney_date" type="number" value="20260101" />
+      </div>
+    </div>
+
+    <div style="margin-top:14px;">
+      <label class="muted">Draw entries (one per line)</label>
+      <textarea name="draw_text" rows="18" style="width:100%; padding:10px;" placeholder="Player 1&#10;BYE&#10;Player 2&#10;Player 3&#10;..."></textarea>
+    </div>
+    
+
+    <button type="submit">Generate public post</button>
+  </form>
+</div>
+
+{% endblock %}
