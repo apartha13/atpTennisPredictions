@@ -4,6 +4,9 @@ import math
 import requests
 from datetime import datetime, date
 from sqlalchemy import text
+import pandas as pd
+import numpy as np
+
 
 SURFACE_MAP = {
     "Hard": "Hard",
@@ -23,26 +26,33 @@ def fetch_year_rows(year: int) -> list[dict]:
     reader = csv.DictReader(f)
     return list(reader)
 
+def parse_int_or_none(x):
+    x = (x or "").strip()
+    if not x:
+        return None
+    try:
+        return int(float(x))  # handles "8", "8.0" safely
+    except Exception:
+        return None
+
+def _s(x):
+    if x is None:
+        return ""
+    return str(x).strip()
+
 def make_match_key(row: dict) -> str:
-    """
-    Use match_num when present. If match_num is missing (happens in some seasons),
-    fall back to a deterministic key based on matchup + round + score.
-    """
-    tid = (row.get("tourney_id") or "").strip()
-    tdate = (row.get("tourney_date") or "").strip()
-    mnum = (row.get("match_num") or "").strip()
+    tid = _s(row.get("tourney_id"))
+    tdate = _s(row.get("tourney_date"))
+    mnum = _s(row.get("match_num"))
 
     if mnum:
         return f"{tid}|{tdate}|{mnum}"
 
-    # Fallback: deterministic “signature” for the match
-    w = (row.get("winner_name") or "").strip()
-    l = (row.get("loser_name") or "").strip()
-    rnd = (row.get("round") or "").strip()
-    score = (row.get("score") or "").strip()
-    minutes = (row.get("minutes") or "").strip()
-
-    # This is stable across re-runs and avoids collisions when match_num is blank
+    w = _s(row.get("winner_name"))
+    l = _s(row.get("loser_name"))
+    rnd = _s(row.get("round"))
+    score = _s(row.get("score"))
+    minutes = _s(row.get("minutes"))
     return f"{tid}|{tdate}|{rnd}|{w}|{l}|{score}|{minutes}"
 
 def upsert_matches(conn, rows: list[dict]) -> int:
@@ -66,21 +76,25 @@ def upsert_matches(conn, rows: list[dict]) -> int:
             "round": row.get("round"),
             "winner_name": row.get("winner_name"),
             "loser_name": row.get("loser_name"),
+            "winner_rank": parse_int_or_none(row.get("winner_rank")),
+            "loser_rank":  parse_int_or_none(row.get("loser_rank")),
             "score": row.get("score"),
             "minutes": int(row["minutes"]) if row.get("minutes") else None,
         }
 
         res = conn.execute(text("""
-    INSERT INTO matches (
-      match_key, tourney_id, tourney_name, tourney_level, surface, tourney_date, match_num,
-      round, winner_name, loser_name, score, minutes
-    )
-    VALUES (
-      :match_key, :tourney_id, :tourney_name, :tourney_level, :surface, :tourney_date, :match_num,
-      :round, :winner_name, :loser_name, :score, :minutes
-    )
-    ON CONFLICT (match_key) DO NOTHING;
-"""), params)
+        INSERT INTO matches (
+        match_key, tourney_id, tourney_name, tourney_level, surface, tourney_date, match_num,
+        round, winner_name, loser_name, score, minutes,
+        winner_rank, loser_rank
+        )
+        VALUES (
+        :match_key, :tourney_id, :tourney_name, :tourney_level, :surface, :tourney_date, :match_num,
+        :round, :winner_name, :loser_name, :score, :minutes,
+        :winner_rank, :loser_rank
+        )
+        ON CONFLICT (match_key) DO NOTHING;
+        """), params)
 
         # rowcount should be 1 if inserted, 0 if conflict/no-op
         try:
@@ -473,6 +487,80 @@ def backfill_h2h_event(conn) -> None:
     GROUP BY 1,2,3;
     """))
 
+def ensure_and_backfill_rank(conn, *, use_elo_fallback: bool = True) -> dict:
+    """
+    Ensures public.player_state.rank exists and backfills it from matches winner_rank/loser_rank.
+    Optionally fills any remaining NULLs using an Elo-based proxy rank.
+
+    Returns simple stats dict for logging.
+    """
+
+    # 1) Ensure rank column exists
+    conn.execute(text("""
+        ALTER TABLE public.player_state
+        ADD COLUMN IF NOT EXISTS rank INT;
+    """))
+
+    # 2) Backfill from most recent match rank (winner_rank + loser_rank)
+    conn.execute(text("""
+        WITH ranked AS (
+          SELECT winner_name AS player_name,
+                 winner_rank AS rank,
+                 tourney_date
+          FROM public.matches
+          WHERE winner_rank IS NOT NULL
+
+          UNION ALL
+
+          SELECT loser_name AS player_name,
+                 loser_rank AS rank,
+                 tourney_date
+          FROM public.matches
+          WHERE loser_rank IS NOT NULL
+        ),
+        latest AS (
+          SELECT DISTINCT ON (player_name)
+                 player_name, rank
+          FROM ranked
+          ORDER BY player_name, tourney_date DESC
+        )
+        UPDATE public.player_state ps
+        SET rank = l.rank
+        FROM latest l
+        WHERE ps.player_name = l.player_name;
+    """))
+
+    # 3) Optional fallback: Elo-based proxy for anyone still NULL
+    if use_elo_fallback:
+        conn.execute(text("""
+            WITH e AS (
+              SELECT player_name,
+                     ROW_NUMBER() OVER (ORDER BY COALESCE(elo_overall, 1500) DESC) AS rk
+              FROM public.player_state
+            )
+            UPDATE public.player_state ps
+            SET rank = e.rk
+            FROM e
+            WHERE ps.player_name = e.player_name
+              AND ps.rank IS NULL;
+        """))
+
+    # 4) Stats + stamp into model_state (nice for debugging on your /model page)
+    totals = conn.execute(text("""
+        SELECT COUNT(*) AS total,
+               COUNT(rank) AS non_null_rank,
+               COUNT(*) - COUNT(rank) AS null_rank
+        FROM public.player_state;
+    """)).mappings().one()
+
+    conn.execute(text("""
+        INSERT INTO public.model_state(key, value)
+        VALUES ('last_rank_backfill_at', :v)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+    """), {"v": datetime.now(timezone.utc).isoformat()})
+
+    return dict(totals)
+
 def set_state(conn, key: str, value: str) -> None:
     conn.execute(text("""
         INSERT INTO model_state (key, value)
@@ -498,6 +586,10 @@ def backfill_years(conn, start_year: int, end_year: int) -> None:
     set_state(conn, "last_ingest_at", datetime.utcnow().isoformat() + "Z")
 
 # PREDICTION UTILITIES
+
+def log_loss(y_true, p):
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    return -(y_true * math.log(p) + (1 - y_true) * math.log(1 - p))
 
 def canon_pair(a: str, b: str) -> tuple[str, str, bool]:
     a = (a or "").strip()
@@ -578,6 +670,21 @@ def get_event_record(conn, player: str, event_key: str) -> tuple[int, int]:
         return (0, 0)
     return int(r[0] or 0), int(r[1] or 0)
 
+def get_labeled_matches(conn, year: int):
+    return conn.execute(text("""
+        SELECT
+            winner_name,
+            loser_name,
+            surface,
+            tourney_name
+        FROM matches
+        WHERE tourney_date BETWEEN :y1 AND :y2
+          AND score NOT ILIKE '%w/o%'
+    """), {
+        "y1": year * 10000 + 101,
+        "y2": year * 10000 + 1231
+    }).fetchall()
+
 def predict_h2h(conn, player_a: str, player_b: str, surface: str, tourney_name: str | None = None) -> dict:
     """
     Uses:
@@ -648,6 +755,51 @@ def predict_h2h(conn, player_a: str, player_b: str, surface: str, tourney_name: 
             "final_elo_diff": float(diff),
         }
     }
+
+def predict_match_proba(
+    conn,
+    player_a: str,
+    player_b: str,
+    surface: str,
+    tourney_name: str | None,
+    *,
+    elo_scale: float,
+    surface_weight: float,
+    h2h_surface_w: float,
+    h2h_all_w: float,
+    event_w: float,
+) -> float:
+    s = surface.strip()
+
+    a_s, a_o = get_elos(conn, player_a, s)
+    b_s, b_o = get_elos(conn, player_b, s)
+
+    a_blend = surface_weight * a_s + (1 - surface_weight) * a_o
+    b_blend = surface_weight * b_s + (1 - surface_weight) * b_o
+
+    a_ws, b_ws, a_wa, b_wa = get_h2h(conn, player_a, player_b, s)
+
+    p_h2h_s = smoothed_rate(a_ws, b_ws, prior_games=4)
+    p_h2h_a = smoothed_rate(a_wa, b_wa, prior_games=8)
+
+    h2h_edge = (
+        (p_h2h_s - 0.5) * h2h_surface_w +
+        (p_h2h_a - 0.5) * h2h_all_w
+    )
+
+    event_edge = 0.0
+    if tourney_name:
+        ek = build_event_key(tourney_name, s)
+        aw, al = get_event_record(conn, player_a, ek)
+        bw, bl = get_event_record(conn, player_b, ek)
+        ar = smoothed_rate(aw, al, prior_games=10)
+        br = smoothed_rate(bw, bl, prior_games=10)
+        event_edge = (ar - br) * event_w
+
+    diff = (a_blend - b_blend) + h2h_edge + event_edge
+
+    # 🔑 probability mapping
+    return 1.0 / (1.0 + 10 ** (-diff / elo_scale))
 
 def tournament_odds_no_draw(conn, tourney_name: str, surface: str, pool_n: int = 64) -> list[dict]:
     """
@@ -730,6 +882,66 @@ def tournament_odds_no_draw(conn, tourney_name: str, surface: str, pool_n: int =
     out.sort(key=lambda d: d["p"], reverse=True)
     return out
 
+def add_asof_days_since_last_match(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds pre-match days-since-last-match for winner and loser, computed ONLY from prior matches.
+    Requires: tourney_date (yyyymmdd int), winner_name, loser_name.
+    Output cols:
+      - w_days_since_last, l_days_since_last, days_since_last_diff
+      - w_days_missing, l_days_missing
+    """
+    d = df.sort_values(["tourney_date"]).copy()
+
+    # track last match date (yyyymmdd) seen per player
+    last_date = {}
+
+    w_days = []
+    l_days = []
+    w_miss = []
+    l_miss = []
+
+    # convert yyyymmdd -> pandas datetime for accurate day diffs
+    def to_dt(x):
+        try:
+            return pd.to_datetime(str(int(x)), format="%Y%m%d")
+        except Exception:
+            return pd.NaT
+
+    for _, r in d.iterrows():
+        cur_dt = to_dt(r["tourney_date"])
+        w = str(r["winner_name"])
+        l = str(r["loser_name"])
+
+        w_last = last_date.get(w)
+        l_last = last_date.get(l)
+
+        if w_last is None or pd.isna(cur_dt):
+            w_days.append(np.nan)
+            w_miss.append(1)
+        else:
+            w_days.append((cur_dt - w_last).days)
+            w_miss.append(0)
+
+        if l_last is None or pd.isna(cur_dt):
+            l_days.append(np.nan)
+            l_miss.append(1)
+        else:
+            l_days.append((cur_dt - l_last).days)
+            l_miss.append(0)
+
+        # update last_date AFTER computing features (no lookahead)
+        if not pd.isna(cur_dt):
+            last_date[w] = cur_dt
+            last_date[l] = cur_dt
+
+    d["w_days_since_last"] = w_days
+    d["l_days_since_last"] = l_days
+    d["days_since_last_diff"] = d["w_days_since_last"] - d["l_days_since_last"]
+    d["w_days_missing"] = w_miss
+    d["l_days_missing"] = l_miss
+
+    return d
+
 def update_model(conn, start_year: int, end_year: int) -> None:
     print("[ML] backfill_years start")
     #backfill_years(conn, start_year, end_year)
@@ -746,6 +958,10 @@ def update_model(conn, start_year: int, end_year: int) -> None:
 
     print("[ML] backfill_h2h_event start")
     backfill_h2h_event(conn)
+
+    # ✅ ADD THIS near the end, after player_state exists/updated
+    stats = ensure_and_backfill_rank(conn, use_elo_fallback=True)
+    print("[ML] rank backfill stats:", stats)
 
     print("[ML] done — writing state")
     set_state(conn, "last_model_update_at", datetime.utcnow().isoformat() + "Z")

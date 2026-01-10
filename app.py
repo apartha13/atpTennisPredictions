@@ -8,7 +8,12 @@ from urllib.parse import urlencode
 from fastapi.staticfiles import StaticFiles
 from ml_update import update_model
 from ml_update import update_model, predict_h2h, tournament_odds_no_draw
-
+from tennis_model import TennisPredictor, TourneyCtx
+from pydantic import BaseModel
+import difflib
+from model_runtime import ModelRuntime
+import json
+from datetime import datetime
 
 # --- League config ---
 EVENTS_13 = [
@@ -73,6 +78,8 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+xgb_predictor = TennisPredictor(engine)
+MODEL = ModelRuntime("artifacts/xgb_model.json", "artifacts/feature_columns.json")
 
 
 def init_db() -> None:
@@ -129,7 +136,9 @@ def init_db() -> None:
         winner_name TEXT,
         loser_name TEXT,
         score TEXT,
-        minutes INT
+        minutes INT,
+        winner_rank INT,
+        loser_rank INT
         );
         """))
 
@@ -189,6 +198,18 @@ def init_db() -> None:
         """))
 
         conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS bracket_posts (
+          id BIGSERIAL PRIMARY KEY,
+          year INT NOT NULL,
+          event_short TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          content_json TEXT NOT NULL,  -- full model output as JSON string
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+        """))
+
+        conn.execute(text("""
         CREATE TABLE IF NOT EXISTS model_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -220,6 +241,8 @@ def init_db() -> None:
 @app.on_event("startup")
 def startup():
     init_db()
+    MODEL.load()
+
 
 
 def get_people() -> list[str]:
@@ -227,6 +250,12 @@ def get_people() -> list[str]:
         rows = conn.execute(text("SELECT name FROM people ORDER BY name;")).fetchall()
     return [r[0] for r in rows]
 
+def get_player_rank(conn, name: str) -> int:
+    row = conn.execute(
+        text("SELECT rank FROM public.player_state WHERE player_name=:p LIMIT 1"),
+        {"p": name}
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else 300
 
 def get_events():
     with engine.begin() as conn:
@@ -361,6 +390,77 @@ def calc_event_breakdown():
         })
     return list(events.values())
 
+def infer_default_round(n: int) -> str:
+    if n == 128: return "R128"
+    if n == 64: return "R64"
+    if n == 32: return "R32"
+    if n == 16: return "R16"
+    if n == 8: return "QF"
+    if n == 4: return "SF"
+    if n == 2: return "F"
+    return "R32"
+
+def load_latest_bracket_post(event_short: str):
+    with engine.begin() as conn:
+        row = conn.execute(text("""
+          SELECT title, content_json, params_json, created_at
+          FROM bracket_posts
+          WHERE year=:y AND event_short=:ev
+          ORDER BY created_at DESC
+          LIMIT 1
+        """), {"y": LEAGUE_YEAR, "ev": event_short}).fetchone()
+
+    if not row:
+        return None
+
+    title, content_json, params_json, created_at = row
+
+    # params_json might be NULL for older rows; keep it safe
+    params = {}
+    if params_json:
+        try:
+            params = json.loads(params_json) if isinstance(params_json, str) else params_json
+        except Exception:
+            params = {}
+
+    return {
+        "title": title,
+        "content": json.loads(content_json),
+        "params": params,                 # ✅ THIS fixes your template crash
+        "created_at": created_at,
+    }
+
+
+def compute_upset_spots(round1_matches: list[dict], top_n: int = 8):
+    spots = []
+    with engine.begin() as conn:
+        for m in round1_matches:
+            a, b = m.get("a",""), m.get("b","")
+            if a.upper() == "BYE" or b.upper() == "BYE":
+                continue
+
+            p_a = float(m.get("p_a", 0.5))
+            fav = a if p_a >= 0.5 else b
+            dog = b if p_a >= 0.5 else a
+            dog_p = (1 - p_a) if p_a >= 0.5 else p_a
+
+            fav_r = get_player_rank(conn, fav)
+            dog_r = get_player_rank(conn, dog)
+
+            # keep only “true underdogs”: worse rank number + lower win chance
+            if dog_r <= fav_r:
+                continue
+
+            spots.append({
+                "match": f"{a} vs {b}",
+                "underdog": dog,
+                "p": dog_p,
+                "underdog_rank": dog_r,
+                "favorite_rank": fav_r,
+            })
+
+    spots.sort(key=lambda x: -x["p"])
+    return spots[:top_n]
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -496,6 +596,65 @@ def model_update(commissioner_key: str = Form(...)):
 
     return RedirectResponse("/model", status_code=303)
 
+@app.get("/model/picks", response_class=HTMLResponse)
+def model_picks_page(request: Request, event_short: str = Query(default="AO")):
+    key = (event_short or "AO").strip().upper()
+    post = load_latest_bracket_post(key)
+
+    return templates.TemplateResponse("model_picks.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "events": get_events(),
+        "selected_event_short": key,
+        "post": post,
+    })
+
+
+@app.get("/draw", response_class=HTMLResponse)
+def draw_page(request: Request):
+    return templates.TemplateResponse("draw.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "events": get_events(),
+    })
+
+class DrawValidateIn(BaseModel):
+    players: list[str]
+
+@app.post("/api/draw/validate")
+def api_draw_validate(payload: DrawValidateIn):
+    players_in = [normalize_name(x) for x in payload.players if normalize_name(x)]
+    if not players_in:
+        return {"matched": [], "unmatched": []}
+
+    with engine.begin() as conn:
+        # pull a “canonical” list once for matching
+        rows = conn.execute(text("""
+            SELECT player_name
+            FROM elo_overall
+            ORDER BY elo DESC
+        """)).fetchall()
+        canon = [r[0] for r in rows]
+
+    canon_lc = {c.lower(): c for c in canon}
+
+    matched = []
+    unmatched = []
+
+    for p in players_in:
+        key = p.lower()
+        if p.strip().upper() == "BYE" or is_placeholder(p):
+            matched.append(p)   # accept BYE/Q/LL/WC
+            continue
+        if key in canon_lc:
+            matched.append(canon_lc[key])
+        else:
+            # fuzzy suggestions
+            sug = difflib.get_close_matches(p, canon, n=5, cutoff=0.6)
+            unmatched.append({"input": p, "suggestions": sug})
+
+    return {"matched": matched, "unmatched": unmatched}
+
 @app.get("/api/h2h")
 def api_h2h(
     player_a: str,
@@ -593,6 +752,59 @@ def api_tournaments(q: str = Query("", min_length=1), limit: int = 12):
 
     return [r[0] for r in rows]
 
+# app.py
+
+@app.post("/api/simulate_draw")
+def api_simulate_draw(
+    players_text: str = Form(...),
+    surface: str = Form("Hard"),
+    tourney_level: str = Form("250"),
+    best_of: int = Form(3),
+    tourney_date: int = Form(20250101),
+    n_sims: int = Form(3000),
+    seed: int = Form(42),
+):
+    players = [ln.strip() for ln in (players_text or "").splitlines()]
+
+    # keep blanks OUT, but allow BYE as a real entry if user typed it
+    players = [" ".join(p.split()) for p in players if " ".join(p.split())]
+
+    if len(players) < 2:
+        raise HTTPException(422, "Need at least 2 entries.")
+    if (len(players) & (len(players) - 1)) != 0:
+        raise HTTPException(422, "Draw size must be a power of 2 (2,4,8,16,32,64,128).")
+
+    ctx = TourneyCtx(
+        tourney_date=int(tourney_date),
+        surface=surface.strip(),
+        tourney_level=str(tourney_level).strip(),
+        round=infer_default_round(len(players)),
+        best_of=int(best_of),
+    )
+
+    det, odds, round_adv = xgb_predictor.simulate_tournament(
+        players_in_order=players,
+        base_ctx=ctx,
+        n_sims=int(n_sims),
+        seed=int(seed),
+    )
+
+    top = [{"player": p, "p": float(v)} for p, v in list(odds.items())[:25]]
+
+    return {
+        "surface": ctx.surface,
+        "tourney_level": ctx.tourney_level,
+        "best_of": ctx.best_of,
+        "n_sims": int(n_sims),
+
+        "champion_det": det["champion"],
+        "rounds_det": det["rounds"],     # ✅ deterministic matchups per round
+        "round_adv": round_adv,          # ✅ per-round survival probs
+
+        "title_odds": top,
+    }
+
+
 @app.get("/predict", response_class=HTMLResponse)
 def predict_page(request: Request):
     return templates.TemplateResponse("predict.html", {
@@ -601,6 +813,114 @@ def predict_page(request: Request):
         "events": get_events(),          # existing helper you already have
         "event_meta": EVENT_META,        # the dict you added earlier
     })
+
+@app.get("/commissioner/bracket", response_class=HTMLResponse)
+def commissioner_bracket_page(request: Request):
+    return templates.TemplateResponse("commissioner_bracket.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "events": get_events(),
+    })
+
+
+@app.post("/commissioner/bracket/generate")
+def commissioner_generate_bracket(
+    request: Request,
+    commissioner_key: str = Form(...),
+    event_short: str = Form(...),
+    surface: str = Form("Hard"),
+    tourney_level: str = Form("G"),
+    best_of: int = Form(5),
+    tourney_date: int = Form(20260101),
+    n_sims: int = Form(5000),
+    seed: int = Form(42),
+
+    draw_text: str = Form(...),
+):
+    if commissioner_key != COMMISSIONER_KEY:
+        raise HTTPException(403, "Wrong commissioner key.")
+
+    key = (event_short or "").strip().upper()
+    meta = EVENT_META.get(key)
+    if not meta:
+        raise HTTPException(400, "Unknown event.")
+
+    players = [" ".join((ln or "").split()) for ln in (draw_text or "").splitlines()]
+    players = [p for p in players if p]  # keep BYE and placeholders like Q/LL
+
+    if len(players) < 2:
+        raise HTTPException(422, "Need at least 2 entries.")
+    if (len(players) & (len(players) - 1)) != 0:
+        raise HTTPException(422, "Draw size must be a power of 2 (2,4,8,16,32,64,128).")
+
+    ctx = TourneyCtx(
+        tourney_date=int(tourney_date),
+        surface=surface.strip(),
+        tourney_level=str(tourney_level).strip(),
+        round=infer_default_round(len(players)),
+        best_of=int(best_of),
+    )
+
+    det, odds, round_adv = xgb_predictor.simulate_tournament(
+        players_in_order=players,
+        base_ctx=ctx,
+        n_sims=int(n_sims),
+        seed=int(seed),
+    )
+
+    rounds_list = list(det["rounds"].keys())
+    r1 = det["rounds"][rounds_list[0]] if rounds_list else []
+    upset_spots = compute_upset_spots(r1, top_n=10)
+
+    top = [{"player": p, "p": float(v)} for p, v in list(odds.items())[:25]]
+
+    payload = {
+        "event_short": key,
+        "event_id": f"{key}{LEAGUE_YEAR}",
+        "surface": ctx.surface,
+        "tourney_level": ctx.tourney_level,
+        "best_of": ctx.best_of,
+        "tourney_date": ctx.tourney_date,
+        "n_sims": int(n_sims),
+        "seed": int(seed),
+
+        "champion_det": det["champion"],
+        "rounds_det": det["rounds"],
+        "round_adv": round_adv,
+        "title_odds": top,
+        "upset_spots": upset_spots,
+    }
+
+
+    params_payload = {
+        "event_short": key,
+        "event_id": f"{key}{LEAGUE_YEAR}",
+        "surface": ctx.surface,
+        "tourney_level": ctx.tourney_level,
+        "best_of": ctx.best_of,
+        "tourney_date": ctx.tourney_date,
+        "n_sims": int(n_sims),
+        "seed": int(seed),
+        "draw_size": len(players),
+    }
+
+    title = f"{meta['tourney_name']} — Model Bracket Prediction ({LEAGUE_YEAR})"
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+          INSERT INTO bracket_posts(year, event_short, event_id, title, params_json, content_json)
+          VALUES (:year, :ev, :eid, :title, :params, :content)
+        """), {
+            "year": LEAGUE_YEAR,
+            "ev": key,
+            "eid": f"{key}{LEAGUE_YEAR}",
+            "title": title,
+            "params": json.dumps(params_payload),
+            "content": json.dumps(payload),
+        })
+
+    return RedirectResponse(f"/model/picks?event_short={key}", status_code=303)
+
 
 @app.get("/results", response_class=HTMLResponse)
 def results_page(request: Request):
@@ -638,4 +958,18 @@ def submit_result(
           DO UPDATE SET round_reached = excluded.round_reached;
         """), {"e": event_id, "pl": player, "r": round_reached})
 
-    return RedirectResponse("/results", status_code=303)
+@app.get("/debug/sinner")
+def debug_sinner():
+    ctx = TourneyCtx(
+        tourney_date=20260101,
+        surface="Hard",
+        tourney_level="G",
+        round="R128",
+        best_of=5,
+    )
+
+    # Use your existing predictor instance
+    out1 = xgb_predictor.debug_match("Jannik Sinner", "Alex Michelsen", ctx)
+    out2 = xgb_predictor.debug_match("Alex Michelsen", "Jannik Sinner", ctx)
+
+    return {"A_vs_B": out1, "B_vs_A": out2, "sum": out1["p_a"] + out2["p_a"]}
