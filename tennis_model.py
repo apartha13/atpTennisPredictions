@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple, DefaultDict
 from collections import defaultdict
 import re
-
+from functools import lru_cache
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -142,6 +142,47 @@ class TennisPredictor:
         
         self._calibrate_proba_direction()
 
+    @lru_cache(maxsize=10000)  # safe for e2-micro
+    def _cached_predict(
+        self,
+        a: str,
+        b: str,
+        surface: str,
+        level: str,
+        best_of: int,
+        tourney_date: int,
+        rnd: str,
+    ) -> float:
+        ctx = TourneyCtx(
+            tourney_date=int(tourney_date),
+            surface=str(surface),
+            tourney_level=str(level),
+            round=str(rnd),
+            best_of=int(best_of),
+        )
+
+        ps = self.load_player_state_bulk([a, b])
+        return self.predict_match(a, b, ctx, ps)
+
+    def predict_match_cached(self, a: str, b: str, ctx: TourneyCtx) -> float:
+        # BYE / placeholders should never reach the cache
+        if a.upper() == "BYE":
+            return 0.0
+        if b.upper() == "BYE":
+            return 1.0
+
+        return self._cached_predict(
+            str(a),
+            str(b),
+            str(ctx.surface),
+            str(ctx.tourney_level),
+            int(ctx.best_of),
+            int(ctx.tourney_date),
+            str(ctx.round),
+        )
+
+    def clear_cache(self):
+        self._cached_predict.cache_clear()
 
     # ---------- normalization helpers ----------
 
@@ -444,7 +485,7 @@ class TennisPredictor:
                     winner = a
                     p = 1.0
                 else:
-                    p = self.predict_match(a, b, ctx, ps=ps_all)
+                    p = self.predict_match_cached(a, b, ctx)
                     winner = a if p >= 0.5 else b
                 matches.append({
                     "a": a,
@@ -480,7 +521,7 @@ class TennisPredictor:
                     elif is_bye(b):
                         winner = a
                     else:
-                        p = self.predict_match(a, b, ctx, ps=ps_all)
+                        p = self.predict_match_cached(a, b, ctx)
                         winner = a if (rng.random() < p) else b
 
                     nxt.append(winner)
@@ -494,6 +535,7 @@ class TennisPredictor:
             champ = cur[0]
             wins[champ] = wins.get(champ, 0) + 1
 
+        print(self._cached_predict.cache_info())
         odds = {p: c / n_sims for p, c in sorted(wins.items(), key=lambda x: -x[1])}
 
         # convert adv to probabilities

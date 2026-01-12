@@ -1,7 +1,12 @@
 import os
+from fastapi import FastAPI, Request, Form, HTTPException, Query
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 import pandas as pd
 import numpy as np
 from sqlalchemy import create_engine, text
+from tennis_model import TennisPredictor, TourneyCtx
 
 CSV_PATHS = [
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2022.csv",
@@ -19,6 +24,17 @@ LEVEL_K = {
     "D": 18, "F": 40, "O": 18
 }
 ROUND_MULT = {"R128":1.0,"R64":1.05,"R32":1.1,"R16":1.15,"QF":1.2,"SF":1.25,"F":1.3}
+
+# --- Environment ---
+DATABASE_URL = os.environ["DATABASE_URL"]  # Supabase/Render Postgres URL
+LEAGUE_YEAR = int(os.environ.get("LEAGUE_YEAR", "2026"))
+COMMISSIONER_KEY = os.environ.get("COMMISSIONER_KEY", "")
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+xgb_predictor = TennisPredictor(engine)
 
 def expected(ra, rb):
     return 1.0 / (1.0 + 10.0 ** ((rb - ra) / 400.0))
@@ -236,6 +252,8 @@ def main():
 
     upsert_player_state(engine, ps)
     print("✅ uploaded player_state to Supabase")
+
+    xgb_predictor.clear_cache()
 
 if __name__ == "__main__":
     main()

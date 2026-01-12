@@ -610,6 +610,8 @@ def model_update(commissioner_key: str = Form(...)):
         print("[ML] update button clicked — starting update_model()")
         update_model(conn, START_YEAR, END_YEAR)
 
+    xgb_predictor.clear_cache()
+
     return RedirectResponse("/model", status_code=303)
 
 @app.get("/model/picks", response_class=HTMLResponse)
@@ -780,8 +782,6 @@ def api_simulate_draw(
     n_sims: int = Form(3000),
     seed: int = Form(42),
 ):
-    return {"ok": True, "n_players": len(players_text.splitlines())}
-"""
     players = [ln.strip() for ln in (players_text or "").splitlines()]
 
     # keep blanks OUT, but allow BYE as a real entry if user typed it
@@ -821,7 +821,6 @@ def api_simulate_draw(
 
         "title_odds": top,
     }
-"""
 
 @app.get("/predict", response_class=HTMLResponse)
 def predict_page(request: Request):
