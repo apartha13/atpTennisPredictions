@@ -4,58 +4,85 @@
 <div class="card">
   <h3 style="margin-top:0;">Draw Simulator</h3>
   <div class="muted">
-    Paste the draw in <b>bracket order</b>, one player per line.<br/>
-    Order matters: lines 1–2 are Match 1, 3–4 Match 2, etc. (A vs B, A vs B...)
-    <br/>Use <b>BYE</b> for byes. You can also type placeholders like <b>Q</b>, <b>Q1</b>, <b>LL</b>, <b>WC</b>.
+    Paste the official draw (one entry per line). Use <b>BYE</b>, <b>Q</b>, <b>LL</b>, <b>WC</b> if needed.
+    <br/>
+    This does <b>not</b> create a public post — it only simulates and shows results on this page.
+    <br/>
+    Suggestion: Instead of typing in the names yourself, ask an LLM to do that work for you.
   </div>
 </div>
 
 <div class="card">
-  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
-    <div style="min-width:220px;">
-      <label class="muted">Event</label><br/>
-      <select id="event_short" style="width:100%; padding:8px;">
-        {% for ev in events %}
-          <option value="{{ ev.short_id }}">{{ ev.short_id }} — {{ ev.name }}</option>
-        {% endfor %}
-      </select>
+  <form id="simForm">
+    <!-- Tournament name (free text) -->
+    <div style="margin-top:2px;">
+      <label class="muted">Tournament name</label>
+      <input name="tourney_name" type="text" placeholder="e.g., Australian Open 2026" required />
+      <div class="muted" style="margin-top:6px;">
+        This is just a label for this simulation (not saved publicly).
+      </div>
     </div>
 
-    <div style="min-width:160px;">
-      <label class="muted">Surface</label><br/>
-      <select id="surface" style="width:100%; padding:8px;">
-        <option>Hard</option>
-        <option>Clay</option>
-        <option>Grass</option>
-        <option>Carpet</option>
-        <option>Unknown</option>
-      </select>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:12px;">
+      <div style="min-width:160px;">
+        <label class="muted">Surface</label>
+        <select name="surface" style="width:100%;">
+          <option>Hard</option>
+          <option>Clay</option>
+          <option>Grass</option>
+          <option>Carpet</option>
+          <option selected>Unknown</option>
+        </select>
+      </div>
+
+      <div style="min-width:160px;">
+        <label class="muted">Level</label>
+        <select name="tourney_level" style="width:100%;">
+          <option value="G">G (Slam)</option>
+          <option value="M">M (Masters)</option>
+          <option value="500">500</option>
+          <option value="250" selected>250</option>
+        </select>
+      </div>
+
+      <div style="min-width:140px;">
+        <label class="muted">Best of</label>
+        <select name="best_of" style="width:100%;">
+          <option value="5">5</option>
+          <option value="3" selected>3</option>
+        </select>
+      </div>
     </div>
 
-    <div style="min-width:160px;">
-      <label class="muted">Draw size</label><br/>
-      <select id="draw_size" style="width:100%; padding:8px;">
-        <option value="32">32</option>
-        <option value="64" selected>64</option>
-        <option value="128">128</option>
-      </select>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:12px;">
+      <div style="min-width:160px;">
+        <label class="muted">Sims</label>
+        <input name="n_sims" type="number" value="2000" min="200" step="100" />
+      </div>
+      <div style="min-width:160px;">
+        <label class="muted">Seed</label>
+        <input name="seed" type="number" value="42" />
+      </div>
+      <div style="min-width:180px;">
+        <label class="muted">Date (YYYYMMDD)</label>
+        <input name="tourney_date" type="number" value="20260101" />
+      </div>
     </div>
 
-    <button id="btn_sim" type="button" style="padding:10px 14px;">Simulate</button>
-  </div>
+    <div style="margin-top:14px;">
+      <label class="muted">Draw entries (one per line, bracket order)</label>
+      <textarea name="draw_text" rows="18" style="width:100%; padding:10px;"
+        placeholder="Player 1&#10;BYE&#10;Player 2&#10;Player 3&#10;..."></textarea>
+      <div class="muted" style="margin-top:8px;">
+        Tip: The number of lines should be 32 / 64 / 128 (powers of 2). BYE counts as a line.
+      </div>
+    </div>
 
-  <div style="margin-top:14px;">
-    <label class="muted">Players (one per line, in bracket order)</label><br/>
-    <textarea id="players_text" rows="14" style="width:100%; padding:10px;"
-      placeholder="Line 1 = Player A (Match 1)
-Line 2 = Player B (Match 1)
-Line 3 = Player A (Match 2)
-Line 4 = Player B (Match 2)
-...
-Use BYE for a bye."></textarea>
-  </div>
+    <button id="btn_sim" type="submit">Simulate</button>
 
-  <div id="status" class="muted" style="margin-top:10px;"></div>
+    <div id="status" class="muted" style="margin-top:10px;"></div>
+  </form>
+
   <div id="results" style="margin-top:16px;"></div>
 </div>
 
@@ -76,15 +103,20 @@ Use BYE for a bye."></textarea>
     return JSON.parse(text);
   }
 
-  function getPlayersList() {
-    const raw = document.getElementById("players_text").value || "";
-    return raw.split("\n").map(s => s.trim()).filter(Boolean);
+  function parseDrawText(raw) {
+    return (raw || "")
+      .split("\n")
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  function isPow2(n) {
+    return n > 0 && (n & (n - 1)) === 0;
   }
 
   function renderSimulation(data) {
     let html = "";
 
-    // Champion odds
     html += `<h4>Champion odds</h4>`;
     html += `<table style="width:100%; border-collapse:collapse;">
       <thead><tr>
@@ -100,11 +132,9 @@ Use BYE for a bye."></textarea>
     }
     html += `</tbody></table>`;
 
-    // Deterministic bracket (matchups)
     const roundsDet = data.rounds_det || data.matches_det || null;
     if (roundsDet) {
       html += `<h4 style="margin-top:18px;">Deterministic bracket (p ≥ 0.5 wins)</h4>`;
-
       for (const [rnd, matches] of Object.entries(roundsDet)) {
         html += `<div style="margin-top:12px;">
           <b>${esc(rnd)}</b>
@@ -130,7 +160,6 @@ Use BYE for a bye."></textarea>
       }
     }
 
-    // Per-round advancement odds
     const roundAdv = data.round_adv || data.round_odds || null;
     if (roundAdv) {
       html += `<h4 style="margin-top:18px;">Per-round advancement odds (Monte Carlo)</h4>`;
@@ -164,54 +193,66 @@ Use BYE for a bye."></textarea>
     return html;
   }
 
-  async function simulate() {
+  async function simulateFromForm(e) {
+    e.preventDefault();
+
+    const form = document.getElementById("simForm");
     const status = document.getElementById("status");
     const results = document.getElementById("results");
     results.innerHTML = "";
 
-    const drawSize = parseInt(document.getElementById("draw_size").value, 10);
-    const surface = document.getElementById("surface").value;
+    const fd = new FormData(form);
 
-    const players = getPlayersList();
+    const tourneyName = (fd.get("tourney_name") || "").trim();
+    const drawText = (fd.get("draw_text") || "");
+    const entries = parseDrawText(drawText);
 
-    if (players.length !== drawSize) {
-      status.textContent = `Need exactly ${drawSize} lines. You pasted ${players.length}.`;
+    if (!tourneyName) {
+      status.textContent = "Please enter a tournament name.";
       return;
     }
 
-    // optional: sanity check pairs
-    for (let i = 0; i < players.length; i += 2) {
-      if ((players[i] || "").toLowerCase() === (players[i+1] || "").toLowerCase()) {
+    if (entries.length < 2) {
+      status.textContent = "Please paste a draw (at least 2 lines).";
+      return;
+    }
+
+    if (!isPow2(entries.length)) {
+      status.textContent = `Draw must be a power of 2 (32/64/128). You pasted ${entries.length} lines.`;
+      return;
+    }
+
+    // Optional: sanity check pairs not identical
+    for (let i = 0; i < entries.length; i += 2) {
+      if ((entries[i] || "").toLowerCase() === (entries[i+1] || "").toLowerCase()) {
         status.textContent = `Match ${(i/2)+1}: same player in both slots.`;
         return;
       }
     }
 
+    // Your API currently expects players_text; keep compatibility
+    fd.delete("draw_text");
+    fd.append("players_text", entries.join("\n"));
+
     status.textContent = "Simulating...";
 
     try {
-      const fd = new FormData();
-      fd.append("players_text", players.join("\n"));
-      fd.append("surface", surface);
-      fd.append("tourney_level", "250");
-      fd.append("best_of", "3");
-      fd.append("tourney_date", "20250101");
-      fd.append("n_sims", "2000");
-      fd.append("seed", "42");
-
       const data = await postForm("/api/simulate_draw", fd);
 
       status.textContent = "";
-      results.innerHTML = renderSimulation(data);
+      results.innerHTML =
+        `<div class="muted" style="margin-bottom:10px;">
+          <b>${esc(tourneyName)}</b> • ${entries.length}-draw
+        </div>` + renderSimulation(data);
 
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error(err);
       status.textContent = "Sim failed.";
-      results.innerHTML = `<div style="color:#b00020; white-space:pre-wrap;">${esc(String(e))}</div>`;
+      results.innerHTML = `<div style="color:#b00020; white-space:pre-wrap;">${esc(String(err))}</div>`;
     }
   }
 
-  document.getElementById("btn_sim").addEventListener("click", simulate);
+  document.getElementById("simForm").addEventListener("submit", simulateFromForm);
 </script>
 
 {% endblock %}

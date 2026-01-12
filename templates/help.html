@@ -36,12 +36,22 @@
     Use the dropdown suggestions when typing a player name to avoid spelling issues.
   </div>
 
-  <h4 style="margin-top:14px;">Predict</h4>
+  <h4 style="margin-top:14px;">Model</h4>
   <div class="muted">
-    Two tools:
+    Predict:
     <ul style="margin:6px 0 0 18px;">
       <li><b>Tournament Odds</b>: gives win probabilities for top players (no draw bracket needed).</li>
       <li><b>Head-to-head</b>: predicts a match winner using Elo + head-to-head + optional tournament history.</li>
+    </ul>
+    <br>
+    Draw Simulator:
+    <ul style="margin:6px 0 0 18px;">
+      <li><b>Enter the draws for any ATP tournaments and see which players should come out on top!</li>
+    </ul>
+    <br>
+    Model Picks:
+    <ul style="margin:6px 0 0 18px;">
+      <li><b>A trained ML model has figured out the parameters to guess the winners for the main events. Check to see who they predicted after the draws have been released!</li>
     </ul>
   </div>
 
@@ -51,6 +61,7 @@
     <ul style="margin:6px 0 0 18px;">
       <li><b>Model</b>: runs the data update + rebuilds Elo/H2H/event records.</li>
       <li><b>Enter Results</b>: enters the round reached for picked players (used to compute points).</li>
+      <li><b>Bracket Post</b>: Commissioner runs the model to predict the winner.</li>
     </ul>
   </div>
 </div>

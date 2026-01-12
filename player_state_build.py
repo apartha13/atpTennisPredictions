@@ -8,6 +8,7 @@ CSV_PATHS = [
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2023.csv",
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2024.csv",
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2025.csv",
+    "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/ongoing_tourneys.csv",
 ]
 
 SURFACE_MAP = {"Hard": "Hard", "Clay": "Clay", "Grass": "Grass", "Carpet": "Hard"}  # treat carpet as hard
@@ -220,8 +221,11 @@ def main():
     db_url = os.environ["DATABASE_URL"]
     engine = create_engine(db_url, pool_pre_ping=True)
 
-    asof_date = int(os.environ.get("ASOF_DATE", "20250101"))  # default pre-2025
+    asof_date = int(os.environ.get("ASOF_DATE", "20260111")) 
     df = load_csv()
+    print("min date:", int(df["tourney_date"].min()))
+    print("max date:", int(df["tourney_date"].max()))
+    print("2026+ rows:", int((df["tourney_date"] >= 20260101).sum()))
     df_sinner = df[(df["winner_name"] == "Jannik Sinner") | (df["loser_name"] == "Jannik Sinner")]
     print("Sinner matches:", len(df_sinner))
 
