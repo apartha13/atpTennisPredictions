@@ -13,6 +13,105 @@
 </div>
 
 <div class="card">
+  <h3 style="margin-top:0;">🏆 Draw Simulator — How to Use</h3>
+
+  <div class="muted" style="margin-bottom:12px;">
+    Use this simulator to explore <b>win probabilities and likely paths</b> for a tennis tournament draw.
+    <br/>
+    This tool <b>does not save results</b> or affect league standings.
+  </div>
+
+  <hr/>
+
+  <div style="margin-top:10px;">
+    <b>📝 Tournament name</b><br/>
+    <span class="muted">
+      A label for your reference only (e.g. <i>Australian Open 2026</i>).  
+      This does not affect predictions and is not saved publicly.
+    </span>
+  </div>
+
+  <div style="margin-top:10px;">
+    <b>🎾 Surface</b><br/>
+    <span class="muted">
+      Court surface the tournament is played on (Hard, Clay, Grass, etc.).  
+      Players have surface-specific strengths, so this meaningfully affects outcomes.
+    </span>
+  </div>
+
+  <div style="margin-top:10px;">
+    <b>🏟️ Level</b><br/>
+    <span class="muted">
+      Tournament importance:
+      <ul style="margin:6px 0 0 18px;">
+        <li><b>G</b> – Grand Slam</li>
+        <li><b>M</b> – Masters 1000</li>
+        <li><b>500 / 250</b> – ATP Tour events</li>
+      </ul>
+      Higher levels slightly favor elite players in close matches.
+    </span>
+  </div>
+
+  <div style="margin-top:10px;">
+    <b>🧮 Best of</b><br/>
+    <span class="muted">
+      Number of sets required to win a match.
+      <br/>
+      Best-of-5 reduces randomness and favors stronger players.
+    </span>
+  </div>
+
+  <div style="margin-top:10px;">
+    <b>🔁 Simulations (Sims)</b><br/>
+    <span class="muted">
+      Number of times the tournament is simulated.
+      <ul style="margin:6px 0 0 18px;">
+        <li><b>1,000–2,000</b>: fast and stable</li>
+        <li><b>5,000+</b>: smoother probabilities (slower)</li>
+      </ul>
+    </span>
+  </div>
+
+  <div style="margin-top:10px;">
+    <b>🎲 Seed (advanced)</b><br/>
+    <span class="muted">
+      Controls randomness for reproducibility.
+      <br/>
+      You almost never need to change this — the default is recommended.
+    </span>
+  </div>
+
+  <div style="margin-top:10px;">
+    <b>📋 Draw entries</b><br/>
+    <span class="muted">
+      Paste the draw one player per line, in bracket order.
+      <ul style="margin:6px 0 0 18px;">
+        <li>Total lines must be <b>32 / 64 / 128</b></li>
+        <li>Each match uses two consecutive lines</li>
+        <li><b>BYE</b>, <b>Q</b>, <b>LL</b>, <b>WC</b> are allowed</li>
+      </ul>
+    </span>
+  </div>
+
+  <div style="margin-top:12px;">
+    <b>📊 Output</b><br/>
+    <span class="muted">
+      After simulation you’ll see:
+      <ul style="margin:6px 0 0 18px;">
+        <li>Champion win probabilities</li>
+        <li>Most likely winner of each match</li>
+        <li>Per-round advancement odds</li>
+      </ul>
+    </span>
+  </div>
+
+  <div class="muted" style="margin-top:14px;">
+    ⚠️ Results are probabilistic, not guarantees.  
+  </div>
+</div>
+
+
+<div class="card">
   <form id="simForm">
     <!-- Tournament name (free text) -->
     <div style="margin-top:2px;">
@@ -34,7 +133,7 @@
           <option selected>Unknown</option>
         </select>
       </div>
-
+      <br>
       <div style="min-width:160px;">
         <label class="muted">Level</label>
         <select name="tourney_level" style="width:100%;">
@@ -44,7 +143,7 @@
           <option value="250" selected>250</option>
         </select>
       </div>
-
+      <br>
       <div style="min-width:140px;">
         <label class="muted">Best of</label>
         <select name="best_of" style="width:100%;">
@@ -53,20 +152,28 @@
         </select>
       </div>
     </div>
-
+    <br>
     <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:12px;">
       <div style="min-width:160px;">
         <label class="muted">Sims</label>
         <input name="n_sims" type="number" value="2000" min="200" step="100" />
       </div>
-      <div style="min-width:160px;">
-        <label class="muted">Seed</label>
-        <input name="seed" type="number" value="42" />
-      </div>
+      <br>
       <div style="min-width:180px;">
         <label class="muted">Date (YYYYMMDD)</label>
         <input name="tourney_date" type="number" value="20260101" />
       </div>
+      <br>
+      <details>
+        <summary class="muted">Advanced options</summary>
+        <div style="margin-top:8px;">
+          <label class="muted">Seed</label>
+          <input name="seed" type="number" value="42" />
+          <div class="muted" style="margin-top:4px;">
+            Controls randomness for reproducible results. (1-99)
+          </div>
+        </div>
+      </details>
     </div>
 
     <div style="margin-top:14px;">
@@ -101,6 +208,17 @@
     const text = await r.text();
     if (!r.ok) throw new Error(text || ("HTTP " + r.status));
     return JSON.parse(text);
+  }
+
+  async function postJson(url, obj) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(obj),
+  });
+  const text = await r.text();
+  if (!r.ok) throw new Error(text || ("HTTP " + r.status));
+  return JSON.parse(text);
   }
 
   function parseDrawText(raw) {
@@ -222,6 +340,34 @@
       return;
     }
 
+    // 1) Validate names using your existing endpoint
+    status.textContent = "Validating names...";
+
+    const v = await postJson("/api/draw/validate", { players: entries });
+
+    // If any unmatched: show them and stop
+    if ((v.unmatched || []).length > 0) {
+      const items = v.unmatched.map(u => {
+        const sug = (u.suggestions || []).slice(0, 5);
+        const sugTxt = sug.length ? ` (suggestions: ${sug.map(esc).join(", ")})` : "";
+        return `<li><b>${esc(u.input)}</b>${sugTxt}</li>`;
+      }).join("");
+
+      status.innerHTML = `
+        <div style="color:#b00020;">
+          Unknown / misspelled players detected:
+          <ul style="margin:6px 0 0 18px;">${items}</ul>
+          <div class="muted" style="margin-top:6px; color:#b00020;">
+            Fix spelling, or use BYE / Q / LL / WC.
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    // Use canonical matched list (fixes casing / standard names)
+    const matched = v.matched || entries;
+
     // Optional: sanity check pairs not identical
     for (let i = 0; i < entries.length; i += 2) {
       if ((entries[i] || "").toLowerCase() === (entries[i+1] || "").toLowerCase()) {
@@ -232,7 +378,7 @@
 
     // Your API currently expects players_text; keep compatibility
     fd.delete("draw_text");
-    fd.append("players_text", entries.join("\n"));
+    fd.append("players_text", matched.join("\n"));
 
     status.textContent = "Simulating...";
 

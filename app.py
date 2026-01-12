@@ -14,6 +14,7 @@ import difflib
 from model_runtime import ModelRuntime
 import json
 from datetime import datetime
+import re
 
 # --- League config ---
 EVENTS_13 = [
@@ -287,6 +288,21 @@ def player_exists(conn, name: str) -> bool:
         LIMIT 1
     """), {"n": name}).fetchone()
     return bool(r)
+
+
+_PLACEHOLDER_RE = re.compile(r"^(Q|LL|WC)(\d+)?$", re.IGNORECASE)
+
+def is_placeholder(name: str) -> bool:
+    """
+    Accept draw placeholders like:
+      Q, Q1, Q2...
+      LL, LL1...
+      WC, WC1...
+    """
+    s = (name or "").strip()
+    if not s:
+        return False
+    return bool(_PLACEHOLDER_RE.match(s))
 
 def assert_player_exists(conn, name: str):
     if not player_exists(conn, name):
@@ -631,8 +647,8 @@ def api_draw_validate(payload: DrawValidateIn):
         # pull a “canonical” list once for matching
         rows = conn.execute(text("""
             SELECT player_name
-            FROM elo_overall
-            ORDER BY elo DESC
+            FROM public.player_state
+            ORDER BY elo_overall DESC
         """)).fetchall()
         canon = [r[0] for r in rows]
 

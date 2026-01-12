@@ -7,6 +7,7 @@
 </div>
 
 <div class="card">
+  <form id="commissionerForm" method="post" action="/commissioner/bracket/generate">
   <form method="post" action="/commissioner/bracket/generate">
     <label class="muted">Commissioner key</label>
     <input name="commissioner_key" type="password" required />
@@ -69,7 +70,81 @@
     
 
     <button type="submit">Generate public post</button>
+    <div id="comm_status" class="muted" style="margin-top:10px;"></div>
   </form>
 </div>
+<script>
+  function esc(s) {
+    return String(s || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function parseLines(raw) {
+    return (raw || "").split("\n").map(s => s.trim()).filter(Boolean);
+  }
+
+  async function postJson(url, obj) {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(obj),
+    });
+    const text = await r.text();
+    if (!r.ok) throw new Error(text || ("HTTP " + r.status));
+    return JSON.parse(text);
+  }
+
+  const form = document.getElementById("commissionerForm");
+  const status = document.getElementById("comm_status");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    status.textContent = "";
+
+    const ta = form.querySelector('textarea[name="draw_text"]');
+    const entries = parseLines(ta.value);
+
+    if (entries.length < 2) {
+      status.textContent = "Please paste a draw (at least 2 lines).";
+      return;
+    }
+
+    status.textContent = "Validating names...";
+
+    try {
+      const v = await postJson("/api/draw/validate", { players: entries });
+
+      if ((v.unmatched || []).length > 0) {
+        const items = v.unmatched.map(u => {
+          const sug = (u.suggestions || []).slice(0, 5);
+          const sugTxt = sug.length ? ` (suggestions: ${sug.map(esc).join(", ")})` : "";
+          return `<li><b>${esc(u.input)}</b>${sugTxt}</li>`;
+        }).join("");
+
+        status.innerHTML = `
+          <div style="color:#b00020;">
+            Unknown / misspelled players detected:
+            <ul style="margin:6px 0 0 18px;">${items}</ul>
+          </div>
+        `;
+        return;
+      }
+
+      // Overwrite textarea with canonical matched names
+      ta.value = (v.matched || entries).join("\n");
+
+      status.textContent = "";
+      form.submit(); // proceed
+
+    } catch (err) {
+      console.error(err);
+      status.innerHTML = `<div style="color:#b00020; white-space:pre-wrap;">${esc(String(err))}</div>`;
+    }
+  });
+</script>
 
 {% endblock %}
