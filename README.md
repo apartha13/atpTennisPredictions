@@ -51,6 +51,16 @@ Example scoring (configurable):
 
 ---
 
+## Data Source Credit
+
+Tennis match data used by this project is sourced from the TML Database:
+
+- https://github.com/Tennismylife/TML-Database/blob/master/ongoing_tourneys.csv
+
+Credit: Tennismylife / TML-Database.
+
+---
+
 ## 🚀 Running Locally
 
 ### 1️⃣ Clone the repository
