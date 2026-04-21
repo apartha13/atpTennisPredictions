@@ -1,4 +1,8 @@
 # model_runtime.py
+# Legacy lightweight runtime wrapper.
+# App runtime prediction now uses tennis_model.py (TennisPredictor) directly.
+# This file is retained for compatibility/reference.
+
 import json
 import xgboost as xgb
 import pandas as pd

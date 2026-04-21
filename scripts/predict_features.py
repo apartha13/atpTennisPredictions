@@ -1,4 +1,8 @@
 # predict_features.py
+# Legacy utility module.
+# Primary runtime feature construction now lives in tennis_model.py (TennisPredictor.build_feature_row).
+# Keep this file only for historical reference/experiments.
+
 import numpy as np
 import pandas as pd
 from sqlalchemy import text

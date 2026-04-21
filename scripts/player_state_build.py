@@ -1,4 +1,8 @@
 import os
+# Legacy standalone script.
+# Primary ingestion/backfill pipeline ownership is in ml_update.py.
+# Keep this script for manual rebuild workflows only.
+
 from fastapi import FastAPI, Request, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -6,13 +10,14 @@ from fastapi.staticfiles import StaticFiles
 import pandas as pd
 import numpy as np
 from sqlalchemy import create_engine, text
-from tennis_model import TennisPredictor, TourneyCtx
+from runtime.tennis_model import TennisPredictor, TourneyCtx
 
 CSV_PATHS = [
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2022.csv",
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2023.csv",
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2024.csv",
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2025.csv",
+    "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/2026.csv",
     "https://raw.githubusercontent.com/Tennismylife/TML-Database/master/ongoing_tourneys.csv",
 ]
 

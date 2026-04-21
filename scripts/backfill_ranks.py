@@ -1,6 +1,10 @@
 import os
+# Legacy standalone utility.
+# Rank backfill responsibilities are now part of ml_update.py update flow.
+# Keep this script only for targeted/manual repair runs.
+
 from sqlalchemy import create_engine, text
-from ml_update import fetch_year_rows, make_match_key, parse_int_or_none
+from pipeline.ml_update import fetch_year_rows, make_match_key, parse_int_or_none
 
 engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
 

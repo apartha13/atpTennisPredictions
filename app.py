@@ -6,12 +6,10 @@ from sqlalchemy import create_engine, text
 from typing import Optional
 from urllib.parse import urlencode 
 from fastapi.staticfiles import StaticFiles
-from ml_update import update_model
-from ml_update import update_model, predict_h2h, tournament_odds_no_draw
-from tennis_model import TennisPredictor, TourneyCtx
+from pipeline.ml_update import update_model, predict_h2h, tournament_odds_no_draw
+from runtime.tennis_model import TennisPredictor, TourneyCtx
 from pydantic import BaseModel
 import difflib
-from model_runtime import ModelRuntime
 import json
 from datetime import datetime
 import re
@@ -80,7 +78,6 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 xgb_predictor = TennisPredictor(engine)
-MODEL = ModelRuntime("artifacts/xgb_model.json", "artifacts/feature_columns.json")
 
 
 def init_db() -> None:
@@ -242,7 +239,6 @@ def init_db() -> None:
 @app.on_event("startup")
 def startup():
     init_db()
-    MODEL.load()
 
 
 
@@ -604,7 +600,7 @@ def model_update(commissioner_key: str = Form(...)):
         raise HTTPException(403, "Wrong commissioner key.")
 
     START_YEAR = 2022
-    END_YEAR = 2025
+    END_YEAR = 2026
 
     with engine.begin() as conn:
         print("[ML] update button clicked — starting update_model()")

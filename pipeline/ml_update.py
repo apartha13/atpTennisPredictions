@@ -944,10 +944,10 @@ def add_asof_days_since_last_match(df: pd.DataFrame) -> pd.DataFrame:
 
 def update_model(conn, start_year: int, end_year: int) -> None:
     print("[ML] backfill_years start")
-    #backfill_years(conn, start_year, end_year)
+    backfill_years(conn, start_year, end_year)
 
     print("[ML] recompute_elos start")
-    #recompute_elos(conn, write_per_match_elos=False)
+    recompute_elos(conn, write_per_match_elos=False)
 
     print("[ML] backfill_h2h start")
     backfill_h2h(conn)

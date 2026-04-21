@@ -11,7 +11,7 @@ from sklearn.metrics import log_loss, accuracy_score
 from sklearn.model_selection import train_test_split
 
 # If you already have a consistent match_key builder, use it:
-from ml_update import make_match_key, add_asof_days_since_last_match  # MUST match how match_key was created in DB
+from pipeline.ml_update import make_match_key, add_asof_days_since_last_match  # MUST match how match_key was created in DB
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
