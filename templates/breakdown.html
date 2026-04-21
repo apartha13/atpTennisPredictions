@@ -30,19 +30,37 @@
   {% for ev in breakdown %}
     <div class="card">
       <h4 style="margin:0 0 8px 0;">{{ ev.short_id }} — {{ ev.name }}</h4>
-      <table>
-        <thead><tr><th>Person</th><th>Pick</th><th>Round</th><th class="points">Points</th></tr></thead>
-        <tbody>
-          {% for row in ev.rows %}
-            <tr>
-              <td>{{ row.person }}</td>
-              <td>{{ row.player }}</td>
-              <td>{{ row.round }}</td>
-              <td class="points">{{ row.points }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      {% if ev.picks_revealed %}
+        <table>
+          <thead><tr><th>Person</th><th>Pick</th><th>Round</th><th class="points">Points</th></tr></thead>
+          <tbody>
+            {% for row in ev.rows %}
+              <tr>
+                <td>{{ row.person }}</td>
+                <td>{{ row.player }}</td>
+                <td>{{ row.round }}</td>
+                <td class="points">{{ row.points }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="muted" style="margin-bottom:10px;">
+          Picks are hidden for this event until the commissioner reveals them.
+          {{ ev.rows|length }} submission{% if ev.rows|length != 1 %}s{% endif %} received.
+        </div>
+        <table>
+          <thead><tr><th>Person</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for row in ev.rows %}
+              <tr>
+                <td>{{ row.person }}</td>
+                <td>Submitted</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
     </div>
   {% endfor %}
 {% endif %}

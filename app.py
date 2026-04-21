@@ -101,6 +101,11 @@ def init_db() -> None:
         """))
 
         conn.execute(text("""
+        ALTER TABLE events
+        ADD COLUMN IF NOT EXISTS picks_revealed BOOLEAN NOT NULL DEFAULT FALSE;
+        """))
+
+        conn.execute(text("""
         CREATE TABLE IF NOT EXISTS predictions (
           event_id TEXT NOT NULL,
           person_name TEXT NOT NULL,
@@ -257,11 +262,25 @@ def get_player_rank(conn, name: str) -> int:
 def get_events():
     with engine.begin() as conn:
         rows = conn.execute(
-            text("SELECT id, short_id, name, level FROM events WHERE year=:y ORDER BY id;"),
+            text("""
+            SELECT id, short_id, name, level, picks_revealed
+            FROM events
+            WHERE year=:y
+            ORDER BY sort_order ASC, id ASC;
+            """),
             {"y": LEAGUE_YEAR}
         ).fetchall()
     # list of dicts for templates
-    return [{"id": r[0], "short_id": r[1], "name": r[2], "level": r[3]} for r in rows]
+    return [
+        {
+            "id": r[0],
+            "short_id": r[1],
+            "name": r[2],
+            "level": r[3],
+            "picks_revealed": bool(r[4]),
+        }
+        for r in rows
+    ]
 
 def get_conn():
     return engine.connect()
@@ -378,6 +397,7 @@ def calc_event_breakdown():
     with engine.begin() as conn:
         rows = conn.execute(text(f"""
         SELECT e.id AS event_id, e.short_id, e.name,
+             e.picks_revealed,
                p.person_name, p.player_name,
                COALESCE(r.round_reached, '') AS round_reached,
                {case_expr} AS pts
@@ -392,8 +412,14 @@ def calc_event_breakdown():
 
     # Group into event blocks
     events = {}
-    for event_id, short_id, name, person, player, rnd, pts in rows:
-        events.setdefault(event_id, {"event_id": event_id, "short_id": short_id, "name": name, "rows": []})
+    for event_id, short_id, name, picks_revealed, person, player, rnd, pts in rows:
+        events.setdefault(event_id, {
+            "event_id": event_id,
+            "short_id": short_id,
+            "name": name,
+            "picks_revealed": bool(picks_revealed),
+            "rows": []
+        })
         events[event_id]["rows"].append({
             "person": person,
             "player": player,
@@ -937,10 +963,12 @@ def commissioner_generate_bracket(
 
 @app.get("/results", response_class=HTMLResponse)
 def results_page(request: Request):
+    events = get_events()
     return templates.TemplateResponse("results.html", {
         "request": request,
         "year": LEAGUE_YEAR,
-        "events": get_events(),
+        "events": events,
+        "reveal_statuses": events,
         "rounds": ALLOWED_ROUNDS,
     })
 
@@ -970,6 +998,30 @@ def submit_result(
           ON CONFLICT (event_id, player_name)
           DO UPDATE SET round_reached = excluded.round_reached;
         """), {"e": event_id, "pl": player, "r": round_reached})
+
+    return RedirectResponse("/results", status_code=303)
+
+
+@app.post("/results/reveal")
+def set_event_reveal(
+    commissioner_key: str = Form(...),
+    event_id: str = Form(...),
+    reveal: Optional[str] = Form(default=None),
+):
+    if commissioner_key != COMMISSIONER_KEY:
+        raise HTTPException(403, "Wrong commissioner key.")
+
+    event_id = (event_id or "").strip()
+    reveal_on = reveal == "on"
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+          UPDATE events
+          SET picks_revealed = :v
+          WHERE id = :e AND year = :y;
+        """), {"v": bool(reveal_on), "e": event_id, "y": LEAGUE_YEAR})
+
+    return RedirectResponse("/results", status_code=303)
 
 @app.get("/debug/sinner")
 def debug_sinner():

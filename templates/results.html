@@ -35,6 +35,42 @@
     Enter results only for players that someone picked. Submitting again overwrites the saved round.
   </p>
 </div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Reveal Picks By Event (Commissioner Only)</h3>
+  <div class="muted" style="margin-bottom:10px;">
+    Turn reveal ON for events you want visible on the Breakdown page.
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Event</th>
+        <th>Visible</th>
+        <th>Update</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in reveal_statuses %}
+      <tr>
+        <td>{{ e.id }} — {{ e.name }}</td>
+        <td>{% if e.picks_revealed %}Yes{% else %}No{% endif %}</td>
+        <td>
+          <form action="/results/reveal" method="post" style="display:flex; align-items:center; gap:10px; margin:0;">
+            <input name="commissioner_key" type="password" placeholder="Commissioner key" required style="max-width:220px; margin:0;" />
+            <input type="hidden" name="event_id" value="{{ e.id }}" />
+            <label style="display:flex; align-items:center; gap:6px; margin:0;">
+              <input type="checkbox" name="reveal" {% if e.picks_revealed %}checked{% endif %} style="width:auto; max-width:none; margin:0;" />
+              Reveal
+            </label>
+            <button type="submit" style="margin:0;">Save</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 <script>
     wireAutocomplete("result_player", "/api/players");
   </script>
