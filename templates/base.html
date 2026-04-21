@@ -14,33 +14,72 @@
       
         <style>
           :root {
-            --bg-blue: #0049a2;
-            --card-blue: #6acde3;
-            --text-white: #ffffff;
-            --text-muted: rgba(255,255,255,0.85);
-            --border-light: rgba(0, 0, 0, 0.25);
+            --bg-deep: #0a2240;
+            --bg-mid: #123a6b;
+            --bg-glow: #1e5f94;
+
+            --panel: rgba(9, 28, 54, 0.58);
+            --panel-border: rgba(146, 197, 255, 0.24);
+
+            --card: rgba(236, 246, 255, 0.93);
+            --card-border: rgba(12, 51, 92, 0.14);
+
+            --text-strong: #eaf4ff;
+            --text-main: #0f2745;
+            --text-muted: #4b6788;
+            --text-link: #d7ebff;
+
+            --border-soft: rgba(15, 39, 69, 0.18);
+            --focus-ring: rgba(73, 166, 255, 0.48);
+
+            --space-1: 6px;
+            --space-2: 10px;
+            --space-3: 14px;
+            --space-4: 18px;
+            --space-5: 24px;
+            --space-6: 32px;
+
+            --radius-sm: 10px;
+            --radius-md: 14px;
+            --radius-lg: 20px;
           }
       
           body {
             font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-            background: var(--bg-blue);
-            color: var(--text-white);
-            max-width: 1000px;
+            background:
+              radial-gradient(1200px 600px at 20% -10%, rgba(83, 170, 255, 0.24), transparent 60%),
+              radial-gradient(900px 500px at 95% 0%, rgba(72, 142, 211, 0.20), transparent 55%),
+              linear-gradient(165deg, var(--bg-deep), var(--bg-mid) 58%, var(--bg-glow));
+            color: var(--text-strong);
+            max-width: 1080px;
             margin: 0 auto;
-            padding: 32px 20px;
+            padding: var(--space-6) var(--space-5) 42px;
+            min-height: 100vh;
           }
       
           h1, h2, h3, h4 {
             font-family: 'Playfair Display', serif;
             letter-spacing: 0.3px;
+            margin: 0;
+          }
+
+          h2 {
+            font-size: clamp(1.55rem, 2.4vw, 2rem);
+            line-height: 1.1;
           }
       
           header {
             display: flex;
             align-items: baseline;
             justify-content: space-between;
-            gap: 16px;
-            margin-bottom: 12px;
+            gap: var(--space-4);
+            margin-bottom: var(--space-3);
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: var(--radius-lg);
+            padding: var(--space-4) var(--space-5);
+            box-shadow: 0 18px 50px rgba(2, 11, 24, 0.32);
+            backdrop-filter: blur(5px);
           }
 
           .nav-dropdown {
@@ -52,7 +91,7 @@
             margin-top: 0;
             padding: 0;
             background: transparent;
-            color: var(--text-white);
+            color: var(--text-link);
             border: none;
             font-weight: 500;
             cursor: pointer;
@@ -93,14 +132,14 @@
             }
       
           nav a {
-            color: var(--text-white);
+            color: var(--text-link);
             text-decoration: none;
-            margin-right: 14px;
-            font-weight: 500;
+            margin-right: var(--space-3);
+            font-weight: 600;
           }
       
           nav a:hover {
-            text-decoration: underline;
+            color: #ffffff;
           }
 
           .nav-dropdown button {
@@ -114,16 +153,30 @@
       
           hr {
             border: none;
-            border-top: 1px solid var(--border-light);
-            margin: 16px 0 28px;
+            border-top: 1px solid rgba(190, 222, 255, 0.25);
+            margin: var(--space-4) 0 var(--space-6);
           }
       
           .card {
-            background: var(--card-blue);
-            border-radius: 16px;
-            padding: 22px;
-            margin: 22px 0;
-            box-shadow: 0 10px 24px rgba(0,0,0,0.08);
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            color: var(--text-main);
+            border-radius: var(--radius-lg);
+            padding: var(--space-5);
+            margin: var(--space-5) 0;
+            box-shadow: 0 14px 38px rgba(6, 26, 52, 0.20);
+          }
+
+          .card h1,
+          .card h2,
+          .card h3,
+          .card h4,
+          .card p,
+          .card label,
+          .card li,
+          .card td,
+          .card th {
+            color: var(--text-main);
           }
       
           table {
@@ -134,14 +187,14 @@
           }
       
           th, td {
-            border-bottom: 1px solid var(--border-light);
-            padding: 10px 8px;
+            border-bottom: 1px solid var(--border-soft);
+            padding: var(--space-2) var(--space-1);
             text-align: left;
           }
       
           th { 
             font-weight: 600;
-            color: var(--text-white);
+            color: #163a63;
           }
       
           td.points {
@@ -159,33 +212,53 @@
           .leader-bronze { background: rgba(205, 127, 50, 0.18); }
       
           input, select {
-            padding: 10px;
-            margin-top: 6px;
+            padding: 11px 12px;
+            margin-top: var(--space-1);
             width: 100%;
             max-width: 520px;
-            border-radius: 10px;
-            border: none;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-soft);
+            background: #ffffff;
+            color: #0f2745;
             font-size: 0.95rem;
+            transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+          }
+
+          input:focus,
+          select:focus {
+            outline: none;
+            border-color: #4ea1f0;
+            box-shadow: 0 0 0 4px var(--focus-ring);
           }
       
           button {
-            margin-top: 12px;
-            padding: 10px 16px;
-            border: none;
-            background: #111;
-            color: #fff;
-            border-radius: 12px;
+            margin-top: var(--space-3);
+            padding: 10px 17px;
+            border: 1px solid rgba(7, 28, 56, 0.28);
+            background: linear-gradient(180deg, #153f70, #0f2f58);
+            color: #f7fbff;
+            border-radius: var(--radius-sm);
             font-weight: 600;
             cursor: pointer;
+            box-shadow: 0 8px 18px rgba(8, 26, 50, 0.2);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
           }
       
           button:hover {
-            opacity: 0.9;
+            filter: brightness(1.05);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(8, 26, 50, 0.26);
+          }
+
+          button:active {
+            transform: translateY(0);
+            filter: brightness(0.98);
           }
       
           .muted {
             color: var(--text-muted);
             font-size: 0.9rem;
+            font-weight: 500;
           }
           .pie {
             max-width: 720px;  
@@ -358,7 +431,7 @@
 <body>
   <header>
     <div>
-      <h2 style="margin:0;">ATP Predictions</h2>
+      <h2>ATP Predictions</h2>
       <div class="muted">Season {{year}}</div>
     </div>
     <nav>
