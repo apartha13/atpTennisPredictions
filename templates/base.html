@@ -82,6 +82,21 @@
             backdrop-filter: blur(5px);
           }
 
+          @media (max-width: 820px) {
+            header {
+              flex-direction: column;
+              align-items: flex-start;
+              gap: var(--space-3);
+            }
+          }
+
+          nav {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: var(--space-2);
+          }
+
           .nav-dropdown {
             position: relative;
             display: inline-block;
@@ -89,25 +104,38 @@
 
             .nav-dropdown button {
             margin-top: 0;
-            padding: 0;
-            background: transparent;
+            padding: 9px 12px;
+            background: rgba(232, 246, 255, 0.08);
             color: var(--text-link);
-            border: none;
-            font-weight: 500;
+            border: 1px solid rgba(186, 223, 255, 0.3);
+            border-radius: 999px;
+            font-weight: 600;
             cursor: pointer;
-            font-size: 1rem;
+            font-size: 0.93rem;
+            transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+            }
+
+            .nav-dropdown button:hover {
+            background: rgba(232, 246, 255, 0.15);
+            color: #ffffff;
+            }
+
+            .nav-dropdown button.active {
+            background: #ecf6ff;
+            color: #11345d;
+            border-color: rgba(17, 52, 93, 0.22);
             }
 
             .nav-menu {
             position: absolute;
             right: 0;
-            top: 26px;
-            min-width: 180px;
+            top: calc(100% + 8px);
+            min-width: 200px;
             background: #fff;
             color: #111;
-            border-radius: 12px;
+            border-radius: 14px;
             border: 1px solid rgba(0,0,0,0.15);
-            box-shadow: 0 12px 30px rgba(0,0,0,0.12);
+            box-shadow: 0 16px 36px rgba(0,0,0,0.16);
             padding: 6px;
             display: none;
             z-index: 9999;
@@ -134,21 +162,42 @@
           nav a {
             color: var(--text-link);
             text-decoration: none;
-            margin-right: var(--space-3);
+            margin-right: 0;
+            padding: 9px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(186, 223, 255, 0.28);
+            background: rgba(232, 246, 255, 0.08);
             font-weight: 600;
+            font-size: 0.93rem;
+            transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
           }
       
           nav a:hover {
+            background: rgba(232, 246, 255, 0.15);
             color: #ffffff;
+          }
+
+          nav a.active {
+            background: #ecf6ff;
+            color: #11345d;
+            border-color: rgba(17, 52, 93, 0.22);
           }
 
           .nav-dropdown button {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 0;             /* or 2px 0 if you want a bigger click target */
             margin: 0;
             line-height: 1;
+          }
+
+          .caret {
+            font-size: 0.72rem;
+            transition: transform 0.18s ease;
+          }
+
+          .nav-dropdown button[aria-expanded="true"] .caret {
+            transform: rotate(180deg);
           }
       
           hr {
@@ -429,18 +478,19 @@
       </head>
             
 <body>
+  {% set current_path = request.url.path %}
   <header>
     <div>
       <h2>ATP Predictions</h2>
       <div class="muted">Season {{year}}</div>
     </div>
     <nav>
-        <a href="/">Standings</a>
-        <a href="/help">Help</a>
-        <a href="/breakdown">Breakdown</a>
-        <a href="/picks">Enter Picks</a>
+        <a href="/" class="{% if current_path == '/' %}active{% endif %}">Standings</a>
+        <a href="/help" class="{% if current_path.startswith('/help') %}active{% endif %}">Help</a>
+        <a href="/breakdown" class="{% if current_path.startswith('/breakdown') %}active{% endif %}">Breakdown</a>
+        <a href="/picks" class="{% if current_path.startswith('/picks') %}active{% endif %}">Enter Picks</a>
         <div class="nav-dropdown">
-          <button type="button" id="modelBtn">Model ▾</button>
+          <button type="button" id="modelBtn" class="{% if current_path.startswith('/predict') or current_path.startswith('/draw') or current_path.startswith('/model/picks') %}active{% endif %}" aria-expanded="false" aria-controls="modelMenu">Model <span class="caret">▾</span></button>
           <div class="nav-menu" id="modelMenu">
             <a href="/predict">Predict</a>
             <a href="/draw">Draw Simulator</a>
@@ -448,7 +498,7 @@
           </div>
         </div>
         <div class="nav-dropdown">
-          <button type="button" id="commBtn">Admin ▾</button>
+          <button type="button" id="commBtn" class="{% if current_path.startswith('/model') or current_path.startswith('/results') or current_path.startswith('/commissioner') %}active{% endif %}" aria-expanded="false" aria-controls="commMenu">Admin <span class="caret">▾</span></button>
           <div class="nav-menu" id="commMenu">
             <a href="/model">Model</a>
             <a href="/results">Enter Results</a>
@@ -460,24 +510,30 @@
   <hr/>
   {% block content %}{% endblock %}
   <script>
+    function closeAllMenus() {
+      document.querySelectorAll(".nav-menu").forEach((m) => m.classList.remove("open"));
+      document.querySelectorAll(".nav-dropdown > button").forEach((b) => b.setAttribute("aria-expanded", "false"));
+    }
+
     document.querySelectorAll(".nav-dropdown > button").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         const menu = btn.nextElementSibling;
+        const willOpen = !menu.classList.contains("open");
   
-        // close other menus
-        document.querySelectorAll(".nav-menu").forEach((m) => {
-          if (m !== menu) m.classList.remove("open");
-        });
+        closeAllMenus();
   
-        // toggle this one
-        menu.classList.toggle("open");
+        if (willOpen) {
+          menu.classList.add("open");
+          btn.setAttribute("aria-expanded", "true");
+        }
+
         e.stopPropagation();
       });
     });
   
-    // click anywhere else closes all menus
-    document.addEventListener("click", () => {
-      document.querySelectorAll(".nav-menu").forEach((m) => m.classList.remove("open"));
+    document.addEventListener("click", closeAllMenus);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeAllMenus();
     });
   </script>  
 </body>
