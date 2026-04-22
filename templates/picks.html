@@ -11,7 +11,12 @@
           <option value="{{ p }}" {% if p == selected_person %}selected{% endif %}>{{ p }}</option>
         {% endfor %}
       </select>
-    <div class="muted">If you don’t see your name, you can add it on the Standings page.</div>
+    
+    <div style="margin-top:12px; padding:8px; background-color:rgba(255,255,255,0.05); border-radius:4px; width:100%; box-sizing:border-box;">
+      <div class="muted" style="margin-bottom:6px; font-size:0.9em;">Don't see your name?</div>
+      <input id="new_person_input" placeholder="e.g., John" style="margin-bottom:6px; font-size:0.9em; padding:4px 8px; width:100%; box-sizing:border-box;" />
+      <button type="button" onclick="addPersonQuick()" style="padding:6px 12px; font-size:0.9em;">Add & Continue</button>
+    </div>
 
     <br/><br/>
     <label class="muted">Event</label><br/>
@@ -38,5 +43,38 @@
 </div>
 <script>
     wireAutocomplete("pick_player", "/api/players");
+    
+    async function addPersonQuick() {
+      const name = document.getElementById('new_person_input').value.trim();
+      if (!name) {
+        alert('Please enter a name');
+        return;
+      }
+      
+      try {
+        const res = await fetch('/add_person', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'name=' + encodeURIComponent(name)
+        });
+        
+        if (res.ok) {
+          // Refresh the person dropdown
+          location.reload();
+        } else {
+          alert('Error adding person. Try again.');
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+    
+    // Allow Enter key to add person
+    document.getElementById('new_person_input')?.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addPersonQuick();
+      }
+    });
   </script>
 {% endblock %}
