@@ -5,7 +5,7 @@
   <h3 style="margin-top:0;">Per-event breakdown</h3>
 
   <form method="get" action="/breakdown">
-    <label class="muted" for="event_id">Show</label><br/>
+    <label class="muted" for="event_id">Event</label><br/>
     <select name="event_id" id="event_id" onchange="this.form.submit()">
       <option value="" {% if selected_event_id == "" %}selected{% endif %}>All events</option>
 
@@ -20,6 +20,37 @@
       <button type="submit" style="margin-top:10px;">View</button>
     </noscript>
   </form>
+
+  <div style="margin-top:12px;">
+    <label class="muted" for="person_filter">Filter by Person</label><br/>
+    <select id="person_filter">
+      <option value="">All people</option>
+      {% set people = [] %}
+      {% for ev in breakdown %}
+        {% for row in ev.rows %}
+          {% if row.person not in people %}
+            {% set _ = people.append(row.person) %}
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+      {% for person in people|sort %}
+        <option value="{{ person }}">{{ person }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <script>
+    document.getElementById('person_filter').addEventListener('change', function() {
+      const selectedPerson = this.value.toLowerCase();
+      document.querySelectorAll('table tbody tr').forEach(row => {
+        const personCell = row.querySelector('td');
+        if (personCell) {
+          const personName = personCell.textContent.toLowerCase();
+          row.style.display = !selectedPerson || personName.includes(selectedPerson) ? '' : 'none';
+        }
+      });
+    });
+  </script>
 </div>
 
 {% if breakdown|length == 0 %}
