@@ -516,7 +516,7 @@
   {% set session_data = request.scope.get('session', {}) %}
   {% set current_user = session_data.get('username') %}
   {% set current_person = session_data.get('person_name') %}
-  {% set current_is_admin = session_data.get('is_admin') %}
+  {% set current_is_admin = (session_data.get('is_admin') == true) %}
   <header>
     <div>
       <h2>ATP Predictions</h2>

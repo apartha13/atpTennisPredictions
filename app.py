@@ -21,6 +21,8 @@ import hashlib
 import hmac
 import secrets
 import time
+import smtplib
+from email.message import EmailMessage
 
 # --- League config ---
 EVENTS_13 = [
@@ -87,6 +89,12 @@ ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "").strip().lower()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ALLOW_REGISTRATION = os.environ.get("ALLOW_REGISTRATION", "true").strip().lower() == "true"
 CSRF_COOKIE_NAME = "csrf_token"
+SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "").strip()
+SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").strip().lower() == "true"
 
 if SESSION_SECRET_KEY == "dev-only-change-me":
     # Keep local development working, but require explicit secret for production.
@@ -100,6 +108,7 @@ templates.env.globals["allow_registration"] = ALLOW_REGISTRATION
 xgb_predictor = TennisPredictor(engine)
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_\-.]{3,30}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 FAILED_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 MAX_LOGIN_ATTEMPTS = 8
 LOGIN_WINDOW_SECONDS = 10 * 60
@@ -209,10 +218,6 @@ def ensure_admin_user(conn) -> None:
         print("[SECURITY] ADMIN_PASSWORD is shorter than 10 characters.")
 
     conn.execute(text("""
-      INSERT INTO people(name) VALUES (:n)
-      ON CONFLICT (name) DO NOTHING;
-    """), {"n": ADMIN_USERNAME})
-    conn.execute(text("""
       INSERT INTO users(username, person_name, password_hash, is_admin)
       VALUES (:u, :p, :h, TRUE)
       ON CONFLICT (username) DO UPDATE SET
@@ -223,6 +228,16 @@ def ensure_admin_user(conn) -> None:
         "p": ADMIN_USERNAME,
         "h": hash_password(ADMIN_PASSWORD),
     })
+
+    conn.execute(text("""
+      DELETE FROM people
+      WHERE name = :n
+        AND NOT EXISTS (
+          SELECT 1
+          FROM predictions
+          WHERE person_name = :n
+        );
+    """), {"n": ADMIN_USERNAME})
 
 
 def _is_public_path(path: str) -> bool:
@@ -407,11 +422,17 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS users (
                     username TEXT PRIMARY KEY,
                     person_name TEXT NOT NULL UNIQUE,
+                    email TEXT,
                     password_hash TEXT NOT NULL,
                     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                     last_login_at TIMESTAMP NULL
         );
+        """))
+
+        conn.execute(text("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS email TEXT;
         """))
 
         conn.execute(text("""
@@ -572,6 +593,37 @@ def get_conn():
 
 def normalize_name(s: str) -> str:
     return " ".join((s or "").strip().split())
+
+
+def normalize_email(s: str) -> str:
+    return (s or "").strip().lower()
+
+
+def is_valid_email(s: str) -> bool:
+    return bool(EMAIL_RE.match(s or ""))
+
+
+def smtp_ready() -> bool:
+    return bool(SMTP_HOST and SMTP_FROM_EMAIL)
+
+
+def clean_email_text(value: str) -> str:
+    return (value or "").replace("\xa0", " ").strip()
+
+
+def send_text_email(recipient: str, subject: str, body: str) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = clean_email_text(subject)
+    msg["From"] = clean_email_text(SMTP_FROM_EMAIL)
+    msg["To"] = clean_email_text(recipient)
+    msg.set_content(clean_email_text(body), charset="utf-8")
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+        if SMTP_USE_TLS:
+            server.starttls()
+        if SMTP_USERNAME:
+            server.login(clean_email_text(SMTP_USERNAME), clean_email_text(SMTP_PASSWORD))
+        server.send_message(msg)
 
 def player_exists(conn, name: str) -> bool:
     name = normalize_name(name)
@@ -925,10 +977,49 @@ def home(request: Request):
 
 @app.get("/help", response_class=HTMLResponse)
 def help_page(request: Request):
+    user = get_current_user(request)
+    email = ""
+    if user:
+        with engine.begin() as conn:
+            row = conn.execute(text("""
+              SELECT email
+              FROM users
+              WHERE username = :u
+              LIMIT 1;
+            """), {"u": user["username"]}).fetchone()
+            email = str(row[0] or "") if row else ""
+
     return templates.TemplateResponse("help.html", {
         "request": request,
         "year": LEAGUE_YEAR,
+        "current_email": email,
+        "error": request.query_params.get("error", ""),
+        "message": request.query_params.get("message", ""),
     })
+
+
+@app.post("/account/email")
+def update_account_email(request: Request, email: str = Form(...)):
+    auth_gate = ensure_logged_in(request, "/help")
+    if auth_gate:
+        return auth_gate
+
+    user = get_current_user(request)
+    email_norm = normalize_email(email)
+
+    if not is_valid_email(email_norm):
+        qs = urlencode({"error": "Please provide a valid email address."})
+        return RedirectResponse(f"/help?{qs}", status_code=303)
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+          UPDATE users
+          SET email = :e
+          WHERE username = :u;
+        """), {"e": email_norm, "u": user["username"]})
+
+    qs = urlencode({"message": "Email saved. You can now receive reminder notifications."})
+    return RedirectResponse(f"/help?{qs}", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1037,12 +1128,14 @@ def register_submit(
     username: str = Form(...),
     password: str = Form(...),
     display_name: str = Form(...),
+    email: str = Form(...),
 ):
     if not ALLOW_REGISTRATION:
         raise HTTPException(status_code=404, detail="Registration is disabled.")
 
     uname = username.strip().lower()
     name = normalize_name(display_name)
+    email_norm = normalize_email(email)
 
     if not USERNAME_RE.match(uname):
         return templates.TemplateResponse("register.html", {
@@ -1065,6 +1158,13 @@ def register_submit(
             "error": "Display name must be at least 2 characters.",
         })
 
+    if not is_valid_email(email_norm):
+        return templates.TemplateResponse("register.html", {
+            "request": request,
+            "year": LEAGUE_YEAR,
+            "error": "Please enter a valid email address.",
+        })
+
     try:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -1073,9 +1173,9 @@ def register_submit(
             """), {"n": name})
 
             conn.execute(text("""
-              INSERT INTO users(username, person_name, password_hash, is_admin)
-              VALUES (:u, :p, :h, FALSE);
-            """), {"u": uname, "p": name, "h": hash_password(password)})
+                            INSERT INTO users(username, person_name, email, password_hash, is_admin)
+                            VALUES (:u, :p, :e, :h, FALSE);
+                        """), {"u": uname, "p": name, "e": email_norm, "h": hash_password(password)})
     except IntegrityError:
         return templates.TemplateResponse("register.html", {
             "request": request,
@@ -1586,7 +1686,101 @@ def results_page(request: Request):
         "events": events,
         "reveal_statuses": events,
         "rounds": ALLOWED_ROUNDS,
+        "error": request.query_params.get("error", ""),
+        "message": request.query_params.get("message", ""),
     })
+
+
+@app.post("/results/remind")
+def send_pick_reminders(
+    request: Request,
+    event_id: str = Form(...),
+):
+    auth_gate = ensure_admin(request, "/results")
+    if auth_gate:
+        return auth_gate
+
+    event_id = (event_id or "").strip()
+    if not event_id:
+        return RedirectResponse("/results?error=Missing+event.", status_code=303)
+
+    if not smtp_ready():
+        return RedirectResponse(
+            "/results?error=Email+is+not+configured.+Set+SMTP_HOST+and+SMTP_FROM_EMAIL.",
+            status_code=303,
+        )
+
+    with engine.begin() as conn:
+        event = conn.execute(text("""
+          SELECT id, short_id, name
+          FROM events
+          WHERE id = :e AND year = :y
+          LIMIT 1;
+        """), {"e": event_id, "y": LEAGUE_YEAR}).fetchone()
+
+        if not event:
+            return RedirectResponse("/results?error=Unknown+event.", status_code=303)
+
+        recipient_rows = conn.execute(text("""
+          SELECT
+            u.person_name,
+            u.email,
+            CASE WHEN p.person_name IS NULL THEN FALSE ELSE TRUE END AS has_pick
+          FROM users u
+          LEFT JOIN predictions p
+            ON p.person_name = u.person_name
+           AND p.event_id = :e
+          WHERE COALESCE(u.email, '') <> ''
+          ORDER BY u.person_name ASC;
+        """), {"e": event_id}).fetchall()
+
+    recipients = [(str(r[0]), str(r[1]), bool(r[2])) for r in recipient_rows if r[1]]
+    if not recipients:
+        return RedirectResponse(
+            "/results?message=No+registered+users+with+emails+were+found.",
+            status_code=303,
+        )
+
+    sent = 0
+    failed = 0
+    first_error = ""
+    subject = f"ATP Picks Reminder: {event[1]} {LEAGUE_YEAR}"
+
+    for person_name, recipient, has_pick in recipients:
+        if has_pick:
+            action_line = (
+                f"You already have a pick in for {event[2]} ({event[1]} {LEAGUE_YEAR}). "
+                "If you want to update it, do it soon before picks are revealed and locked."
+            )
+        else:
+            action_line = (
+                f"Please submit your pick for {event[2]} ({event[1]} {LEAGUE_YEAR}) soon."
+            )
+
+        body = (
+            f"Hi {person_name},\n\n"
+            f"{action_line}\n"
+            "Open the app and go to Enter Picks.\n\n"
+            "Thanks!"
+        )
+        try:
+            send_text_email(recipient, subject, body)
+            sent += 1
+        except Exception as exc:
+            failed += 1
+            if not first_error:
+                first_error = f"{recipient}: {str(exc)}"
+
+    if failed and not sent:
+        return RedirectResponse(
+            f"/results?{urlencode({'error': f'Reminder emails failed. First error: {first_error or "Unknown SMTP error."}'})}",
+            status_code=303,
+        )
+
+    msg = f"Reminder emails sent: {sent}. Failed: {failed}."
+    if first_error:
+        msg = f"{msg} First error: {first_error}"
+    return RedirectResponse(f"/results?{urlencode({'message': msg})}", status_code=303)
 
 
 @app.post("/results")

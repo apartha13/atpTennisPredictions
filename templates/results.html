@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
 
+{% if error %}
+  <div class="card" style="border-color:#f6c5ca; background:#fff5f5;">
+    <div style="color:#9f1239;">{{ error }}</div>
+  </div>
+{% endif %}
+
+{% if message %}
+  <div class="card" style="border-color:#b8e3c1; background:#f1fff4;">
+    <div style="color:#14532d;">{{ message }}</div>
+  </div>
+{% endif %}
+
 <div class="card">
   <h3 style="margin-top:0;">Enter / Update Results (Commissioner Only)</h3>
   <form action="/results" method="post">
@@ -29,6 +41,25 @@
 
   <p class="muted" style="margin-bottom:0;">
     Enter results only for players that someone picked. Submitting again overwrites the saved round.
+  </p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Send Pick Reminder Emails (Commissioner Only)</h3>
+  <form action="/results/remind" method="post">
+    <label class="muted">Event</label><br/>
+    <select name="event_id" required>
+      {% for e in events %}
+        <option value="{{e.id}}">{{e.id}} — {{e.name}}</option>
+      {% endfor %}
+    </select>
+
+    <br/><br/>
+    <button type="submit">Send Reminders</button>
+  </form>
+
+  <p class="muted" style="margin-bottom:0;">
+    Sends an email to all registered users with an email on file. If they already picked, the email tells them to update soon if needed.
   </p>
 </div>
 

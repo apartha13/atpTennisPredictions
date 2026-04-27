@@ -2,6 +2,32 @@
 {% block content %}
 
 <div class="card">
+  <h3 style="margin-top:0;">Notification Email</h3>
+  <div class="muted" style="margin-bottom:10px;">
+    Save your email so the commissioner can send reminders when you still need to submit a pick.
+  </div>
+
+  {% if error %}
+    <div style="margin:12px 0; padding:10px 12px; border-radius:10px; background:#fcebec; color:#9f1239; border:1px solid #f6c5ca;">
+      {{ error }}
+    </div>
+  {% endif %}
+
+  {% if message %}
+    <div style="margin:12px 0; padding:10px 12px; border-radius:10px; background:#e8f7ec; color:#14532d; border:1px solid #b8e3c1;">
+      {{ message }}
+    </div>
+  {% endif %}
+
+  <form action="/account/email" method="post">
+    <label class="muted">Email</label><br/>
+    <input name="email" type="email" value="{{ current_email }}" placeholder="you@example.com" required />
+    <br/><br/>
+    <button type="submit">Save Email</button>
+  </form>
+</div>
+
+<div class="card">
   <h3 style="margin-top:0;">How to Use This Site</h3>
   <div class="muted">
     This is our league tracker for the {{year}} ATP season. Use the tabs above to make picks,
@@ -55,15 +81,6 @@
     </ul>
   </div>
 
-  <h4 style="margin-top:14px;">Admin</h4>
-  <div class="muted">
-    Only the commissioner should use these:
-    <ul style="margin:6px 0 0 18px;">
-      <li><b>Model</b>: runs the data update + rebuilds Elo/H2H/event records.</li>
-      <li><b>Enter Results</b>: enters the round reached for picked players (used to compute points).</li>
-      <li><b>Bracket Post</b>: Commissioner runs the model to predict the winner.</li>
-    </ul>
-  </div>
 </div>
 
 <div class="card">

@@ -83,9 +83,16 @@ export DATABASE_URL="postgresql+psycopg2://..."
 export LEAGUE_YEAR="2026"
 export SESSION_SECRET_KEY="replace-with-a-long-random-secret"
 export COOKIE_SECURE="false"  # true when running behind HTTPS
+export FORCE_HTTPS="false"    # true in production
 export ADMIN_USERNAME="commissioner"
 export ADMIN_PASSWORD="replace-with-a-strong-password"
 export ALLOW_REGISTRATION="true"
+export SMTP_HOST="smtp.gmail.com"
+export SMTP_PORT="587"
+export SMTP_USERNAME="your-smtp-username"
+export SMTP_PASSWORD="your-smtp-password"
+export SMTP_FROM_EMAIL="commissioner@yourdomain.com"
+export SMTP_USE_TLS="true"
 ```
 
 ### 5️⃣ Run the server
@@ -113,6 +120,13 @@ How admin is created:
 - `ADMIN_USERNAME`: admin login username for bootstrap.
 - `ADMIN_PASSWORD`: strong admin password for bootstrap.
 - `ALLOW_REGISTRATION`: set to `false` for a private invite-only league.
+- `FORCE_HTTPS`: set to `true` in production to redirect all HTTP traffic to HTTPS.
+- `SMTP_HOST`: SMTP server hostname used for reminder emails.
+- `SMTP_PORT`: SMTP server port (commonly `587`).
+- `SMTP_USERNAME`: SMTP login username (optional if your SMTP relay does not require auth).
+- `SMTP_PASSWORD`: SMTP login password.
+- `SMTP_FROM_EMAIL`: sender address shown on reminder emails.
+- `SMTP_USE_TLS`: set to `true` for STARTTLS SMTP connections.
 
 ### Local example (macOS/Linux)
 
@@ -121,9 +135,16 @@ export DATABASE_URL="postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME"
 export LEAGUE_YEAR="2026"
 export SESSION_SECRET_KEY="replace-with-64-plus-random-chars"
 export COOKIE_SECURE="false"
+export FORCE_HTTPS="false"
 export ADMIN_USERNAME="commissioner"
 export ADMIN_PASSWORD="use-a-long-strong-password"
 export ALLOW_REGISTRATION="true"
+export SMTP_HOST="smtp.gmail.com"
+export SMTP_PORT="587"
+export SMTP_USERNAME="your-smtp-username"
+export SMTP_PASSWORD="your-smtp-password"
+export SMTP_FROM_EMAIL="commissioner@yourdomain.com"
+export SMTP_USE_TLS="true"
 
 uvicorn app:app --reload
 ```
