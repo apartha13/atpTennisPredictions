@@ -44,24 +44,26 @@
   </p>
 </div>
 
-<div class="card">
-  <h3 style="margin-top:0;">Send Pick Reminder Emails (Commissioner Only)</h3>
-  <form action="/results/remind" method="post">
-    <label class="muted">Event</label><br/>
-    <select name="event_id" required>
-      {% for e in events %}
-        <option value="{{e.id}}">{{e.id}} — {{e.name}}</option>
-      {% endfor %}
-    </select>
+{% if email_enabled %}
+  <div class="card">
+    <h3 style="margin-top:0;">Send Pick Reminder Emails (Commissioner Only)</h3>
+    <form action="/results/remind" method="post">
+      <label class="muted">Event</label><br/>
+      <select name="event_id" required>
+        {% for e in events %}
+          <option value="{{e.id}}">{{e.id}} — {{e.name}}</option>
+        {% endfor %}
+      </select>
 
-    <br/><br/>
-    <button type="submit">Send Reminders</button>
-  </form>
+      <br/><br/>
+      <button type="submit">Send Reminders</button>
+    </form>
 
-  <p class="muted" style="margin-bottom:0;">
-    Sends an email to all registered users with an email on file. If they already picked, the email tells them to update soon if needed.
-  </p>
-</div>
+    <p class="muted" style="margin-bottom:0;">
+      Sends an email to all registered users with an email on file. If they already picked, the email tells them to update soon if needed.
+    </p>
+  </div>
+{% endif %}
 
 <div class="card">
   <h3 style="margin-top:0;">Reveal Picks By Event (Commissioner Only)</h3>

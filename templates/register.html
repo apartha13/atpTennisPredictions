@@ -21,9 +21,11 @@
     <label class="muted">Display name</label><br/>
     <input name="display_name" placeholder="e.g., Ajay" required />
 
-    <br/><br/>
-    <label class="muted">Email</label><br/>
-    <input name="email" type="email" placeholder="you@example.com" required />
+    {% if email_enabled %}
+      <br/><br/>
+      <label class="muted">Email</label><br/>
+      <input name="email" type="email" placeholder="you@example.com" required />
+    {% endif %}
 
     <br/><br/>
     <label class="muted">Password</label><br/>

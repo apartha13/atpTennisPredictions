@@ -89,6 +89,7 @@ ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "").strip().lower()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ALLOW_REGISTRATION = os.environ.get("ALLOW_REGISTRATION", "true").strip().lower() == "true"
 CSRF_COOKIE_NAME = "csrf_token"
+EMAIL_FEATURE_ENABLED = os.environ.get("EMAIL_FEATURE_ENABLED", "false").strip().lower() == "true"
 SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "").strip()
@@ -105,6 +106,7 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["allow_registration"] = ALLOW_REGISTRATION
+templates.env.globals["email_feature_enabled"] = EMAIL_FEATURE_ENABLED
 xgb_predictor = TennisPredictor(engine)
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_\-.]{3,30}$")
@@ -979,7 +981,7 @@ def home(request: Request):
 def help_page(request: Request):
     user = get_current_user(request)
     email = ""
-    if user:
+    if EMAIL_FEATURE_ENABLED and user:
         with engine.begin() as conn:
             row = conn.execute(text("""
               SELECT email
@@ -992,6 +994,7 @@ def help_page(request: Request):
     return templates.TemplateResponse("help.html", {
         "request": request,
         "year": LEAGUE_YEAR,
+        "email_enabled": EMAIL_FEATURE_ENABLED,
         "current_email": email,
         "error": request.query_params.get("error", ""),
         "message": request.query_params.get("message", ""),
@@ -1000,6 +1003,9 @@ def help_page(request: Request):
 
 @app.post("/account/email")
 def update_account_email(request: Request, email: str = Form(...)):
+    if not EMAIL_FEATURE_ENABLED:
+        raise HTTPException(status_code=404, detail="Email notifications are disabled.")
+
     auth_gate = ensure_logged_in(request, "/help")
     if auth_gate:
         return auth_gate
@@ -1119,6 +1125,7 @@ def register_page(request: Request):
         "request": request,
         "year": LEAGUE_YEAR,
         "error": "",
+        "email_enabled": EMAIL_FEATURE_ENABLED,
     })
 
 
@@ -1128,7 +1135,7 @@ def register_submit(
     username: str = Form(...),
     password: str = Form(...),
     display_name: str = Form(...),
-    email: str = Form(...),
+    email: str = Form(default=""),
 ):
     if not ALLOW_REGISTRATION:
         raise HTTPException(status_code=404, detail="Registration is disabled.")
@@ -1158,12 +1165,15 @@ def register_submit(
             "error": "Display name must be at least 2 characters.",
         })
 
-    if not is_valid_email(email_norm):
+    if EMAIL_FEATURE_ENABLED and not is_valid_email(email_norm):
         return templates.TemplateResponse("register.html", {
             "request": request,
             "year": LEAGUE_YEAR,
             "error": "Please enter a valid email address.",
+            "email_enabled": EMAIL_FEATURE_ENABLED,
         })
+
+    email_to_store = email_norm if EMAIL_FEATURE_ENABLED else ""
 
     try:
         with engine.begin() as conn:
@@ -1175,7 +1185,7 @@ def register_submit(
             conn.execute(text("""
                             INSERT INTO users(username, person_name, email, password_hash, is_admin)
                             VALUES (:u, :p, :e, :h, FALSE);
-                        """), {"u": uname, "p": name, "e": email_norm, "h": hash_password(password)})
+                        """), {"u": uname, "p": name, "e": email_to_store, "h": hash_password(password)})
     except IntegrityError:
         return templates.TemplateResponse("register.html", {
             "request": request,
@@ -1686,6 +1696,7 @@ def results_page(request: Request):
         "events": events,
         "reveal_statuses": events,
         "rounds": ALLOWED_ROUNDS,
+        "email_enabled": EMAIL_FEATURE_ENABLED,
         "error": request.query_params.get("error", ""),
         "message": request.query_params.get("message", ""),
     })
@@ -1696,6 +1707,9 @@ def send_pick_reminders(
     request: Request,
     event_id: str = Form(...),
 ):
+    if not EMAIL_FEATURE_ENABLED:
+        return RedirectResponse("/results?error=Email+notifications+are+currently+disabled.", status_code=303)
+
     auth_gate = ensure_admin(request, "/results")
     if auth_gate:
         return auth_gate
