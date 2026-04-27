@@ -351,6 +351,84 @@ def calc_totals() -> list[tuple[str, int]]:
         """), {"year": LEAGUE_YEAR}).fetchall()
     return [(r[0], int(r[1])) for r in rows]
 
+
+def calc_place_progression() -> dict:
+    """Place-by-event progression for events that currently have results entered."""
+    case_expr = points_case_sql()
+    with engine.begin() as conn:
+        rows = conn.execute(text(f"""
+        WITH played_events AS (
+            SELECT e.id, e.short_id, e.sort_order
+            FROM events e
+            WHERE e.year = :year
+              AND EXISTS (
+                  SELECT 1
+                  FROM results r
+                  WHERE r.event_id = e.id
+              )
+        ),
+        event_person AS (
+            SELECT
+                ev.sort_order,
+                ev.short_id,
+                pe.name AS person,
+                COALESCE({case_expr}, 0) AS pts
+            FROM played_events ev
+            CROSS JOIN people pe
+            LEFT JOIN predictions p
+              ON p.event_id = ev.id
+             AND p.person_name = pe.name
+            LEFT JOIN results r
+              ON r.event_id = p.event_id
+             AND r.player_name = p.player_name
+        ),
+        cumulative AS (
+            SELECT
+                sort_order,
+                short_id,
+                person,
+                SUM(pts) OVER (
+                    PARTITION BY person
+                    ORDER BY sort_order
+                ) AS cum_pts
+            FROM event_person
+        ),
+        placed AS (
+            SELECT
+                sort_order,
+                short_id,
+                person,
+                cum_pts,
+                RANK() OVER (
+                    PARTITION BY sort_order
+                    ORDER BY cum_pts DESC
+                ) AS place
+            FROM cumulative
+        )
+        SELECT sort_order, short_id, person, cum_pts, place
+        FROM placed
+        ORDER BY sort_order, place ASC, person ASC;
+        """), {"year": LEAGUE_YEAR}).fetchall()
+
+    if not rows:
+        return {"labels": [], "series": []}
+
+    labels = []
+    seen_orders = set()
+    people_data = {}
+
+    for sort_order, short_id, person, cum_pts, place in rows:
+        if sort_order not in seen_orders:
+            labels.append(short_id)
+            seen_orders.add(sort_order)
+        if person not in people_data:
+            people_data[person] = {"label": person, "data": [], "totals": []}
+        people_data[person]["data"].append(int(place))
+        people_data[person]["totals"].append(int(cum_pts or 0))
+
+    series = [people_data[name] for name in sorted(people_data.keys())]
+    return {"labels": labels, "series": series}
+
 def rank_with_ties(totals: list[tuple[str, int]]) -> list[dict]:
     """
     Input:  [(person, total_points), ...] sorted DESC by points.
@@ -505,6 +583,7 @@ def home(request: Request):
     people = get_people()
     events = get_events()
     totals = rank_with_ties(calc_totals())
+    progression = calc_place_progression()
 
     return templates.TemplateResponse("home.html", {
         "request": request,
@@ -512,6 +591,7 @@ def home(request: Request):
         "people": people,
         "events": events,
         "totals": totals,
+        "progression": progression,
     })
 
 @app.get("/help", response_class=HTMLResponse)

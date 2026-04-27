@@ -33,4 +33,83 @@
   {% endif %}
 </div>
 
+<div class="card">
+  <h3 style="margin-top:0;">Place Progression</h3>
+  {% if progression.labels|length == 0 %}
+    <div class="muted">No results entered yet. Add at least one event result to see progression.</div>
+  {% else %}
+    <div class="muted">Updates whenever this page is refreshed.</div>
+    <div style="margin-top:12px; height:380px;">
+      <canvas id="progressionChart"></canvas>
+    </div>
+  {% endif %}
+</div>
+
+{% if progression.labels|length > 0 %}
+<script>
+  const progressionData = {{ progression | tojson }};
+  const palette = [
+    "#0b3b66", "#1a73e8", "#2f855a", "#c05621", "#8b5cf6",
+    "#d9467a", "#0f766e", "#b45309", "#2563eb", "#7c3aed"
+  ];
+
+  const datasets = progressionData.series.map((s, idx) => ({
+    label: s.label,
+    data: s.totals,
+    borderColor: palette[idx % palette.length],
+    backgroundColor: palette[idx % palette.length],
+    borderWidth: 2,
+    pointRadius: 3,
+    pointHoverRadius: 5,
+    tension: 0.25,
+    fill: false,
+    places: s.data
+  }));
+
+  const ctx = document.getElementById("progressionChart");
+  new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: progressionData.labels,
+      datasets
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: {
+          callbacks: {
+            label: (context) => {
+              const points = context.parsed.y;
+              const place = context.dataset.places?.[context.dataIndex] ?? "-";
+              return `${context.dataset.label}: ${points} pts (place ${place})`;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            precision: 0
+          },
+          title: {
+            display: true,
+            text: "Points"
+          }
+        },
+        x: {
+          title: {
+            display: true,
+            text: "Event"
+          }
+        }
+      }
+    }
+  });
+</script>
+{% endif %}
+
 {% endblock %}

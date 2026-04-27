@@ -227,6 +227,14 @@ export LEAGUE_YEAR="2026"
 uvicorn app:app --reload
 ```
 
+### 1b) Update + Restart on Google Cloud Compute Engine (SSH)
+```bash
+cd atpTennisPredictions/
+git pull
+sudo systemctl restart tennis
+sudo systemctl status tennis
+```
+
 ### 2) Refresh Data + Model Tables (from app)
 - Open `/model` page.
 - Use the Model Update action (commissioner key required).
