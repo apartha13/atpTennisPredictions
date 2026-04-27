@@ -3,28 +3,23 @@
 
 <div class="card">
   <h3 style="margin-top:0;">Enter / Update Your Pick</h3>
+  {% if error %}
+    <div style="margin:0 0 10px 0; color:#b42318;">{{ error }}</div>
+  {% endif %}
+  {% if message %}
+    <div style="margin:0 0 10px 0; color:#1d7a33;">{{ message }}</div>
+  {% endif %}
   <form action="/picks" method="post">
-    <label class="muted">Your name</label><br/>
-    <select name="person" required>
-        <option value="" disabled {% if not selected_person %}selected{% endif %}>Select your name</option>
-        {% for p in people %}
-          <option value="{{ p }}" {% if p == selected_person %}selected{% endif %}>{{ p }}</option>
-        {% endfor %}
-      </select>
-    
-    <div style="margin-top:12px; padding:8px; background-color:rgba(255,255,255,0.05); border-radius:4px; width:100%; box-sizing:border-box;">
-      <div class="muted" style="margin-bottom:6px; font-size:0.9em;">Don't see your name?</div>
-      <input id="new_person_input" placeholder="e.g., John" style="margin-bottom:6px; font-size:0.9em; padding:4px 8px; width:100%; box-sizing:border-box;" />
-      <button type="button" onclick="addPersonQuick()" style="padding:6px 12px; font-size:0.9em;">Add & Continue</button>
-    </div>
+    <label class="muted">Logged in as</label><br/>
+    <input value="{{ selected_person }}" disabled />
 
     <br/><br/>
     <label class="muted">Event</label><br/>
     <select name="event_id" required>
         <option value="" disabled {% if not selected_event_id %}selected{% endif %}>Select event</option>
         {% for e in events %}
-          <option value="{{ e.id }}" {% if e.id == selected_event_id %}selected{% endif %}>
-            {{ e.short_id }} — {{ e.name }}
+          <option value="{{ e.id }}" {% if e.id == selected_event_id %}selected{% endif %} {% if e.picks_revealed %}disabled{% endif %}>
+            {{ e.short_id }} — {{ e.name }}{% if e.picks_revealed %} (Locked){% endif %}
           </option>
         {% endfor %}
       </select>
@@ -38,43 +33,36 @@
   </form>
 
   <p class="muted" style="margin-bottom:0;">
-    One pick per event. Submitting again overwrites your previous pick for that event. 
+    One pick per event. You can update a pick until the commissioner reveals picks for that event.
   </p>
 </div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Your Picks (All Events)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Event</th>
+        <th>Your Pick</th>
+        <th>Round</th>
+        <th class="points">Points</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in user_picks %}
+      <tr>
+        <td>{{ row.short_id }} — {{ row.name }}</td>
+        <td>{% if row.player %}{{ row.player }}{% else %}<span class="muted">No pick yet</span>{% endif %}</td>
+        <td>{% if row.player %}{{ row.round or '—' }}{% else %}—{% endif %}</td>
+        <td class="points">{% if row.player and row.points is not none %}{{ row.points }}{% else %}—{% endif %}</td>
+        <td>{% if row.picks_revealed %}Locked{% else %}Open{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 <script>
-    wireAutocomplete("pick_player", "/api/players");
-    
-    async function addPersonQuick() {
-      const name = document.getElementById('new_person_input').value.trim();
-      if (!name) {
-        alert('Please enter a name');
-        return;
-      }
-      
-      try {
-        const res = await fetch('/add_person', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'name=' + encodeURIComponent(name)
-        });
-        
-        if (res.ok) {
-          // Refresh the person dropdown
-          location.reload();
-        } else {
-          alert('Error adding person. Try again.');
-        }
-      } catch (err) {
-        alert('Error: ' + err.message);
-      }
-    }
-    
-    // Allow Enter key to add person
-    document.getElementById('new_person_input')?.addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        addPersonQuick();
-      }
-    });
-  </script>
+  wireAutocomplete("pick_player", "/api/players");
+</script>
 {% endblock %}

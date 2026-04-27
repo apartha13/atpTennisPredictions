@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card" style="max-width:620px; margin:0 auto;">
+  <h3 style="margin-top:0;">Create Account</h3>
+  <p class="muted" style="margin-top:8px;">
+    Your display name is the identity used for picks and leaderboard entries.
+  </p>
+
+  {% if error %}
+    <div style="margin:12px 0; padding:10px 12px; border-radius:10px; background:#fcebec; color:#9f1239; border:1px solid #f6c5ca;">
+      {{ error }}
+    </div>
+  {% endif %}
+
+  <form action="/register" method="post">
+    <label class="muted">Username</label><br/>
+    <input name="username" placeholder="3-30 chars, letters/numbers/._-" required />
+
+    <br/><br/>
+    <label class="muted">Display name</label><br/>
+    <input name="display_name" placeholder="e.g., Ajay" required />
+
+    <br/><br/>
+    <label class="muted">Password</label><br/>
+    <input name="password" type="password" placeholder="At least 10 characters" required />
+
+    <br/><br/>
+    <button type="submit">Create Account</button>
+  </form>
+
+  <p class="muted" style="margin-top:14px; margin-bottom:0;">
+    Already have an account? <a href="/login">Log in</a>.
+  </p>
+</div>
+
+{% endblock %}

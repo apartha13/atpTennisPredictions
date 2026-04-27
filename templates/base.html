@@ -97,6 +97,40 @@
             gap: var(--space-2);
           }
 
+          .nav-auth {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 8px;
+          }
+
+          .nav-user {
+            color: #d7ebff;
+            font-size: 0.88rem;
+            font-weight: 600;
+            opacity: 0.95;
+          }
+
+          .nav-auth form {
+            margin: 0;
+          }
+
+          .nav-auth button {
+            margin-top: 0;
+            padding: 9px 12px;
+            background: rgba(232, 246, 255, 0.08);
+            color: var(--text-link);
+            border: 1px solid rgba(186, 223, 255, 0.28);
+            border-radius: 999px;
+            font-weight: 600;
+            font-size: 0.93rem;
+            box-shadow: none;
+          }
+
+          .nav-auth button:hover {
+            transform: none;
+          }
+
           .nav-dropdown {
             position: relative;
             display: inline-block;
@@ -479,6 +513,10 @@
             
 <body>
   {% set current_path = request.url.path %}
+  {% set session_data = request.scope.get('session', {}) %}
+  {% set current_user = session_data.get('username') %}
+  {% set current_person = session_data.get('person_name') %}
+  {% set current_is_admin = session_data.get('is_admin') %}
   <header>
     <div>
       <h2>ATP Predictions</h2>
@@ -497,12 +535,36 @@
             <a href="/model/picks">Model Picks</a>
           </div>
         </div>
-        <div class="nav-dropdown">
-          <button type="button" id="commBtn" class="{% if current_path.startswith('/model') or current_path.startswith('/results') or current_path.startswith('/commissioner') %}active{% endif %}" aria-expanded="false" aria-controls="commMenu">Admin <span class="caret">▾</span></button>
-          <div class="nav-menu" id="commMenu">
-            <a href="/model">Model</a>
-            <a href="/results">Enter Results</a>
-            <a href="/commissioner/bracket">Bracket Post</a>
+        {% if current_is_admin %}
+          <div class="nav-dropdown">
+            <button type="button" id="commBtn" class="{% if current_path.startswith('/model') or current_path.startswith('/results') or current_path.startswith('/commissioner') %}active{% endif %}" aria-expanded="false" aria-controls="commMenu">Admin <span class="caret">▾</span></button>
+            <div class="nav-menu" id="commMenu">
+              <a href="/model">Model</a>
+              <a href="/results">Enter Results</a>
+              <a href="/commissioner/bracket">Bracket Post</a>
+            </div>
+          </div>
+        {% endif %}
+        <div class="nav-dropdown nav-auth">
+          <button type="button" id="accountBtn" class="{% if current_path.startswith('/login') or current_path.startswith('/register') %}active{% endif %}" aria-expanded="false" aria-controls="accountMenu">
+            {% if current_user %}
+              {{ current_person }}{% if current_is_admin %} (Admin){% endif %}
+            {% else %}
+              Account
+            {% endif %}
+            <span class="caret">▾</span>
+          </button>
+          <div class="nav-menu" id="accountMenu">
+            {% if current_user %}
+              <form action="/logout" method="post">
+                <button type="submit" style="width:100%; text-align:left; border:none; background:transparent; color:#111; border-radius:10px; padding:10px 12px;">Log Out</button>
+              </form>
+            {% else %}
+              <a href="/login">Log In</a>
+              {% if allow_registration %}
+                <a href="/register">Register</a>
+              {% endif %}
+            {% endif %}
           </div>
         </div>
       </nav>

@@ -1,11 +1,14 @@
 import os
 from fastapi import FastAPI, Request, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
-from urllib.parse import urlencode 
+from urllib.parse import urlencode, quote
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from pipeline.ml_update import update_model, predict_h2h, tournament_odds_no_draw
 from runtime.tennis_model import TennisPredictor, TourneyCtx
 from pydantic import BaseModel
@@ -13,6 +16,11 @@ import difflib
 import json
 from datetime import datetime
 import re
+import base64
+import hashlib
+import hmac
+import secrets
+import time
 
 # --- League config ---
 EVENTS_13 = [
@@ -71,13 +79,188 @@ POINTS = {"W": 100, "F": 60, "SF": 40, "QF": 25, "R16": 15, "R32": 8, "R64": 4, 
 # --- Environment ---
 DATABASE_URL = os.environ["DATABASE_URL"]  # Supabase/Render Postgres URL
 LEAGUE_YEAR = int(os.environ.get("LEAGUE_YEAR", "2026"))
-COMMISSIONER_KEY = os.environ.get("COMMISSIONER_KEY", "")
+SESSION_SECRET_KEY = os.environ.get("SESSION_SECRET_KEY", "dev-only-change-me")
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").strip().lower() == "true"
+PASSWORD_ITERATIONS = int(os.environ.get("PASSWORD_ITERATIONS", "260000"))
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "").strip().lower()
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+ALLOW_REGISTRATION = os.environ.get("ALLOW_REGISTRATION", "true").strip().lower() == "true"
+
+if SESSION_SECRET_KEY == "dev-only-change-me":
+    # Keep local development working, but require explicit secret for production.
+    print("[SECURITY] SESSION_SECRET_KEY is not set. Using development fallback.")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+templates.env.globals["allow_registration"] = ALLOW_REGISTRATION
 xgb_predictor = TennisPredictor(engine)
+
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9_\-.]{3,30}$")
+FAILED_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+MAX_LOGIN_ATTEMPTS = 8
+LOGIN_WINDOW_SECONDS = 10 * 60
+
+
+def _b64e(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _b64d(raw: str) -> bytes:
+    return base64.urlsafe_b64decode(raw.encode("ascii"))
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        PASSWORD_ITERATIONS,
+    )
+    return f"pbkdf2_sha256${PASSWORD_ITERATIONS}${_b64e(salt)}${_b64e(digest)}"
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    try:
+        algo, iter_s, salt_s, digest_s = encoded.split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        iterations = int(iter_s)
+        salt = _b64d(salt_s)
+        expected = _b64d(digest_s)
+        actual = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            iterations,
+        )
+        return hmac.compare_digest(actual, expected)
+    except Exception:
+        return False
+
+
+def is_admin_identity(username: Optional[str], is_admin_flag: bool = False) -> bool:
+    normalized = (username or "").strip().lower()
+    return bool(is_admin_flag) or bool(ADMIN_USERNAME and normalized == ADMIN_USERNAME)
+
+
+def get_current_user(request: Request) -> Optional[dict]:
+    username = request.session.get("username")
+    person_name = request.session.get("person_name")
+    if not username or not person_name:
+        return None
+    return {
+        "username": str(username),
+        "person_name": str(person_name),
+        "is_admin": is_admin_identity(str(username), bool(request.session.get("is_admin", False))),
+    }
+
+
+def login_redirect(next_path: str) -> RedirectResponse:
+    safe_next = next_path if next_path.startswith("/") else "/"
+    return RedirectResponse(f"/login?next={quote(safe_next, safe='')}", status_code=303)
+
+
+def ensure_logged_in(request: Request, next_path: str) -> Optional[RedirectResponse]:
+    return None if get_current_user(request) else login_redirect(next_path)
+
+
+def ensure_admin(request: Request, next_path: str) -> Optional[RedirectResponse]:
+    user = get_current_user(request)
+    if not user:
+        return login_redirect(next_path)
+    if not user["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return None
+
+
+def _prune_attempts(ip: str, now: float) -> list[float]:
+    recent = [t for t in FAILED_LOGIN_ATTEMPTS.get(ip, []) if now - t <= LOGIN_WINDOW_SECONDS]
+    FAILED_LOGIN_ATTEMPTS[ip] = recent
+    return recent
+
+
+def login_rate_limited(ip: str) -> bool:
+    now = time.time()
+    recent = _prune_attempts(ip, now)
+    return len(recent) >= MAX_LOGIN_ATTEMPTS
+
+
+def record_failed_login(ip: str) -> None:
+    now = time.time()
+    recent = _prune_attempts(ip, now)
+    recent.append(now)
+    FAILED_LOGIN_ATTEMPTS[ip] = recent
+
+
+def clear_failed_logins(ip: str) -> None:
+    FAILED_LOGIN_ATTEMPTS.pop(ip, None)
+
+
+def ensure_admin_user(conn) -> None:
+    if not (ADMIN_USERNAME and ADMIN_PASSWORD):
+        return
+
+    if len(ADMIN_PASSWORD) < 10:
+        print("[SECURITY] ADMIN_PASSWORD is shorter than 10 characters.")
+
+    conn.execute(text("""
+      INSERT INTO people(name) VALUES (:n)
+      ON CONFLICT (name) DO NOTHING;
+    """), {"n": ADMIN_USERNAME})
+    conn.execute(text("""
+      INSERT INTO users(username, person_name, password_hash, is_admin)
+      VALUES (:u, :p, :h, TRUE)
+      ON CONFLICT (username) DO UPDATE SET
+        password_hash = EXCLUDED.password_hash,
+        is_admin = TRUE;
+    """), {
+        "u": ADMIN_USERNAME,
+        "p": ADMIN_USERNAME,
+        "h": hash_password(ADMIN_PASSWORD),
+    })
+
+
+def _is_public_path(path: str) -> bool:
+    if path in {"/login", "/register", "/logout", "/favicon.ico"}:
+        return True
+    if path.startswith("/static/"):
+        return True
+    return False
+
+
+class LoginRequiredMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        if _is_public_path(path):
+            return await call_next(request)
+
+        session_data = request.scope.get("session") or {}
+        if not session_data.get("username") or not session_data.get("person_name"):
+            if path.startswith("/api/"):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required."},
+                )
+            next_path = path
+            if request.url.query:
+                next_path = f"{path}?{request.url.query}"
+            return login_redirect(next_path)
+
+        return await call_next(request)
+
+
+app.add_middleware(LoginRequiredMiddleware)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET_KEY,
+    same_site="lax",
+    https_only=COOKIE_SECURE,
+    max_age=60 * 60 * 12,
+)
 
 
 def init_db() -> None:
@@ -202,13 +385,30 @@ def init_db() -> None:
 
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS bracket_posts (
-          id BIGSERIAL PRIMARY KEY,
-          year INT NOT NULL,
-          event_short TEXT NOT NULL,
-          event_id TEXT NOT NULL,
-          title TEXT NOT NULL,
-          content_json TEXT NOT NULL,  -- full model output as JSON string
-          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                    id BIGSERIAL PRIMARY KEY,
+                    year INT NOT NULL,
+                    event_short TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    params_json TEXT,
+                    content_json TEXT NOT NULL,  -- full model output as JSON string
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+        """))
+
+        conn.execute(text("""
+        ALTER TABLE bracket_posts
+        ADD COLUMN IF NOT EXISTS params_json TEXT;
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    person_name TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    last_login_at TIMESTAMP NULL
         );
         """))
 
@@ -239,11 +439,35 @@ def init_db() -> None:
                 "year": LEAGUE_YEAR
             })
 
+        ensure_admin_user(conn)
+
 
 
 @app.on_event("startup")
 def startup():
     init_db()
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'",
+    )
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 
@@ -350,6 +574,47 @@ def calc_totals() -> list[tuple[str, int]]:
         ORDER BY total DESC, person ASC;
         """), {"year": LEAGUE_YEAR}).fetchall()
     return [(r[0], int(r[1])) for r in rows]
+
+
+def get_user_picks(person_name: str) -> list[dict]:
+    """Return one row per league event with this user's pick (if any)."""
+    if not person_name:
+        return []
+
+    case_expr = points_case_sql()
+    with engine.begin() as conn:
+        rows = conn.execute(text(f"""
+        SELECT
+            e.id AS event_id,
+            e.short_id,
+            e.name,
+            e.picks_revealed,
+            p.player_name,
+            COALESCE(r.round_reached, '') AS round_reached,
+            {case_expr} AS pts
+        FROM events e
+        LEFT JOIN predictions p
+          ON p.event_id = e.id
+         AND p.person_name = :person
+        LEFT JOIN results r
+          ON r.event_id = p.event_id
+         AND r.player_name = p.player_name
+        WHERE e.year = :year
+        ORDER BY e.sort_order ASC, e.id ASC;
+        """), {"person": person_name, "year": LEAGUE_YEAR}).fetchall()
+
+    return [
+        {
+            "event_id": r[0],
+            "short_id": r[1],
+            "name": r[2],
+            "picks_revealed": bool(r[3]),
+            "player": r[4] or "",
+            "round": (r[5] or "") if r[4] else "",
+            "points": int(r[6] or 0) if r[4] else None,
+        }
+        for r in rows
+    ]
 
 
 def calc_place_progression() -> dict:
@@ -466,7 +731,7 @@ def rank_with_ties(totals: list[tuple[str, int]]) -> list[dict]:
     return ranked
 
 
-def calc_event_breakdown():
+def calc_event_breakdown(viewer_person: Optional[str] = None):
     """
     Returns rows for the home page table:
     event -> person -> (player, round, points)
@@ -491,6 +756,7 @@ def calc_event_breakdown():
     # Group into event blocks
     events = {}
     for event_id, short_id, name, picks_revealed, person, player, rnd, pts in rows:
+        can_view_pick = bool(picks_revealed) or (viewer_person == person)
         events.setdefault(event_id, {
             "event_id": event_id,
             "short_id": short_id,
@@ -500,9 +766,11 @@ def calc_event_breakdown():
         })
         events[event_id]["rows"].append({
             "person": person,
-            "player": player,
-            "round": rnd or "—",
-            "points": int(pts or 0),
+            "is_current_user": viewer_person == person,
+            "show_pick": can_view_pick,
+            "player": player if can_view_pick else "",
+            "round": (rnd or "—") if can_view_pick else "—",
+            "points": int(pts or 0) if can_view_pick else None,
         })
     return list(events.values())
 
@@ -601,8 +869,168 @@ def help_page(request: Request):
         "year": LEAGUE_YEAR,
     })
 
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(
+    request: Request,
+    next_url: str = Query(default="/picks", alias="next"),
+    error: str = Query(default=""),
+    just_registered: int = Query(default=0),
+):
+    next_path = next_url if next_url.startswith("/") else "/picks"
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "next_path": next_path,
+        "error": error,
+        "just_registered": bool(just_registered),
+    })
+
+
+@app.post("/login")
+def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next_url: str = Form("/picks", alias="next"),
+):
+    next_path = next_url if next_url.startswith("/") else "/picks"
+    ip = request.client.host if request.client and request.client.host else "unknown"
+
+    if login_rate_limited(ip):
+        qs = urlencode({
+            "next": next_path,
+            "error": "Too many failed login attempts. Please wait a few minutes.",
+        })
+        return RedirectResponse(f"/login?{qs}", status_code=303)
+
+    uname = username.strip().lower()
+
+    with engine.begin() as conn:
+        row = conn.execute(text("""
+          SELECT username, person_name, password_hash, is_admin
+          FROM users
+          WHERE username = :u
+          LIMIT 1;
+        """), {"u": uname}).fetchone()
+
+        if not row and uname == ADMIN_USERNAME and ADMIN_PASSWORD and hmac.compare_digest(password, ADMIN_PASSWORD):
+            ensure_admin_user(conn)
+            row = conn.execute(text("""
+              SELECT username, person_name, password_hash, is_admin
+              FROM users
+              WHERE username = :u
+              LIMIT 1;
+            """), {"u": uname}).fetchone()
+
+        if row and not bool(row[3]) and uname == ADMIN_USERNAME and ADMIN_PASSWORD and hmac.compare_digest(password, ADMIN_PASSWORD):
+            ensure_admin_user(conn)
+            row = conn.execute(text("""
+              SELECT username, person_name, password_hash, is_admin
+              FROM users
+              WHERE username = :u
+              LIMIT 1;
+            """), {"u": uname}).fetchone()
+
+        if not row or not verify_password(password, row[2]):
+            record_failed_login(ip)
+            qs = urlencode({"next": next_path, "error": "Invalid username or password."})
+            return RedirectResponse(f"/login?{qs}", status_code=303)
+
+        clear_failed_logins(ip)
+        request.session.clear()
+        request.session["username"] = row[0]
+        request.session["person_name"] = row[1]
+        request.session["is_admin"] = is_admin_identity(row[0], bool(row[3]))
+
+        conn.execute(text("""
+          UPDATE users
+          SET last_login_at = NOW()
+          WHERE username = :u;
+        """), {"u": row[0]})
+
+    return RedirectResponse(next_path, status_code=303)
+
+
+@app.post("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    if not ALLOW_REGISTRATION:
+        raise HTTPException(status_code=404, detail="Registration is disabled.")
+
+    return templates.TemplateResponse("register.html", {
+        "request": request,
+        "year": LEAGUE_YEAR,
+        "error": "",
+    })
+
+
+@app.post("/register", response_class=HTMLResponse)
+def register_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    display_name: str = Form(...),
+):
+    if not ALLOW_REGISTRATION:
+        raise HTTPException(status_code=404, detail="Registration is disabled.")
+
+    uname = username.strip().lower()
+    name = normalize_name(display_name)
+
+    if not USERNAME_RE.match(uname):
+        return templates.TemplateResponse("register.html", {
+            "request": request,
+            "year": LEAGUE_YEAR,
+            "error": "Username must be 3-30 chars using letters, numbers, ., -, or _.",
+        })
+
+    if len(password) < 10:
+        return templates.TemplateResponse("register.html", {
+            "request": request,
+            "year": LEAGUE_YEAR,
+            "error": "Password must be at least 10 characters.",
+        })
+
+    if len(name) < 2:
+        return templates.TemplateResponse("register.html", {
+            "request": request,
+            "year": LEAGUE_YEAR,
+            "error": "Display name must be at least 2 characters.",
+        })
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+              INSERT INTO people(name) VALUES (:n)
+              ON CONFLICT (name) DO NOTHING;
+            """), {"n": name})
+
+            conn.execute(text("""
+              INSERT INTO users(username, person_name, password_hash, is_admin)
+              VALUES (:u, :p, :h, FALSE);
+            """), {"u": uname, "p": name, "h": hash_password(password)})
+    except IntegrityError:
+        return templates.TemplateResponse("register.html", {
+            "request": request,
+            "year": LEAGUE_YEAR,
+            "error": "Username or display name already exists. Pick another.",
+        })
+
+    qs = urlencode({"next": "/picks", "just_registered": 1})
+    return RedirectResponse(f"/login?{qs}", status_code=303)
+
 @app.post("/add_person")
-def add_person(name: str = Form(...)):
+def add_person(request: Request, name: str = Form(...)):
+    auth_gate = ensure_admin(request, "/picks")
+    if auth_gate:
+        return auth_gate
+
     name = name.strip()
     if not name:
         raise HTTPException(400, "Name cannot be empty.")
@@ -619,25 +1047,41 @@ def picks_page(
     request: Request,
     person: str = Query(default=""),
     event_id: str = Query(default=""),
+    error: str = Query(default=""),
+    message: str = Query(default=""),
 ):
+    auth_gate = ensure_logged_in(request, "/picks")
+    if auth_gate:
+        return auth_gate
+
+    user = get_current_user(request)
+
     return templates.TemplateResponse("picks.html", {
         "request": request,
         "year": LEAGUE_YEAR,
         "people": get_people(),
         "events": get_events(),
-        "selected_person": person,
+        "selected_person": user["person_name"] if user else person,
         "selected_event_id": event_id,
+        "error": error,
+        "message": message,
+        "user_picks": get_user_picks((user or {}).get("person_name", "")),
     })
 
 
 
 @app.post("/picks")
 def submit_pick(
-    person: str = Form(...),
+    request: Request,
     event_id: str = Form(...),
     player: str = Form(...),
 ):
-    person = person.strip()
+    auth_gate = ensure_logged_in(request, "/picks")
+    if auth_gate:
+        return auth_gate
+
+    user = get_current_user(request)
+    person = (user or {}).get("person_name", "")
     event_id = event_id.strip()
     player = normalize_name(player)
 
@@ -645,6 +1089,23 @@ def submit_pick(
         raise HTTPException(400, "Missing fields.")
 
     with engine.begin() as conn:
+        event_row = conn.execute(text("""
+          SELECT picks_revealed
+          FROM events
+          WHERE id = :e AND year = :y
+          LIMIT 1;
+        """), {"e": event_id, "y": LEAGUE_YEAR}).fetchone()
+
+        if not event_row:
+            raise HTTPException(404, "Unknown event.")
+
+        if bool(event_row[0]):
+            qs = urlencode({
+                "event_id": event_id,
+                "error": "Picks are locked for this event because they are already visible to everyone.",
+            })
+            return RedirectResponse(f"/picks?{qs}", status_code=303)
+
         assert_player_exists(conn, player)
 
         # Ensure person exists (helps avoid “someone forgot to add Mom” errors)
@@ -658,13 +1119,14 @@ def submit_pick(
           DO UPDATE SET player_name = excluded.player_name;
         """), {"e": event_id, "p": person, "pl": player})
 
-    qs = urlencode({"person": person, "event_id": event_id})
+    qs = urlencode({"event_id": event_id, "message": "Pick saved."})
     return RedirectResponse(f"/picks?{qs}", status_code=303)
 
 @app.get("/breakdown", response_class=HTMLResponse)
 def breakdown_page(request: Request, event_id: Optional[str] = Query(default=None)):
+    user = get_current_user(request)
     events = get_events()  
-    breakdown = calc_event_breakdown()
+    breakdown = calc_event_breakdown(viewer_person=(user or {}).get("person_name"))
 
     # Filter to one event if selected
     if event_id:
@@ -680,6 +1142,10 @@ def breakdown_page(request: Request, event_id: Optional[str] = Query(default=Non
 
 @app.get("/model", response_class=HTMLResponse)
 def model_page(request: Request):
+    auth_gate = ensure_admin(request, "/model")
+    if auth_gate:
+        return auth_gate
+
     with engine.begin() as conn:
         last = conn.execute(text("SELECT value FROM model_state WHERE key='last_model_update_at';")).fetchone()
         last = last[0] if last else "Never"
@@ -701,9 +1167,10 @@ def model_page(request: Request):
 
 
 @app.post("/model/update")
-def model_update(commissioner_key: str = Form(...)):
-    if commissioner_key != COMMISSIONER_KEY:
-        raise HTTPException(403, "Wrong commissioner key.")
+def model_update(request: Request):
+    auth_gate = ensure_admin(request, "/model")
+    if auth_gate:
+        return auth_gate
 
     START_YEAR = 2022
     END_YEAR = 2026
@@ -935,6 +1402,10 @@ def predict_page(request: Request):
 
 @app.get("/commissioner/bracket", response_class=HTMLResponse)
 def commissioner_bracket_page(request: Request):
+    auth_gate = ensure_admin(request, "/commissioner/bracket")
+    if auth_gate:
+        return auth_gate
+
     return templates.TemplateResponse("commissioner_bracket.html", {
         "request": request,
         "year": LEAGUE_YEAR,
@@ -945,7 +1416,6 @@ def commissioner_bracket_page(request: Request):
 @app.post("/commissioner/bracket/generate")
 def commissioner_generate_bracket(
     request: Request,
-    commissioner_key: str = Form(...),
     event_short: str = Form(...),
     surface: str = Form("Hard"),
     tourney_level: str = Form("G"),
@@ -956,8 +1426,9 @@ def commissioner_generate_bracket(
 
     draw_text: str = Form(...),
 ):
-    if commissioner_key != COMMISSIONER_KEY:
-        raise HTTPException(403, "Wrong commissioner key.")
+    auth_gate = ensure_admin(request, "/commissioner/bracket")
+    if auth_gate:
+        return auth_gate
 
     key = (event_short or "").strip().upper()
     meta = EVENT_META.get(key)
@@ -1043,6 +1514,10 @@ def commissioner_generate_bracket(
 
 @app.get("/results", response_class=HTMLResponse)
 def results_page(request: Request):
+    auth_gate = ensure_admin(request, "/results")
+    if auth_gate:
+        return auth_gate
+
     events = get_events()
     return templates.TemplateResponse("results.html", {
         "request": request,
@@ -1055,13 +1530,14 @@ def results_page(request: Request):
 
 @app.post("/results")
 def submit_result(
-    commissioner_key: str = Form(...),
+    request: Request,
     event_id: str = Form(...),
     player: str = Form(...),
     round_reached: str = Form(...),
 ):
-    if commissioner_key != COMMISSIONER_KEY:
-        raise HTTPException(403, "Wrong commissioner key.")
+    auth_gate = ensure_admin(request, "/results")
+    if auth_gate:
+        return auth_gate
 
     event_id = event_id.strip()
     player = normalize_name(player)
@@ -1084,12 +1560,13 @@ def submit_result(
 
 @app.post("/results/reveal")
 def set_event_reveal(
-    commissioner_key: str = Form(...),
+    request: Request,
     event_id: str = Form(...),
     reveal: Optional[str] = Form(default=None),
 ):
-    if commissioner_key != COMMISSIONER_KEY:
-        raise HTTPException(403, "Wrong commissioner key.")
+    auth_gate = ensure_admin(request, "/results")
+    if auth_gate:
+        return auth_gate
 
     event_id = (event_id or "").strip()
     reveal_on = reveal == "on"
@@ -1104,7 +1581,11 @@ def set_event_reveal(
     return RedirectResponse("/results", status_code=303)
 
 @app.get("/debug/sinner")
-def debug_sinner():
+def debug_sinner(request: Request):
+    auth_gate = ensure_admin(request, "/")
+    if auth_gate:
+        return auth_gate
+
     ctx = TourneyCtx(
         tourney_date=20260101,
         surface="Hard",

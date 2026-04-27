@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card" style="max-width:560px; margin:0 auto;">
+  <h3 style="margin-top:0;">Log In</h3>
+  <p class="muted" style="margin-top:8px;">Sign in to submit picks and access protected pages.</p>
+
+  {% if just_registered %}
+    <div style="margin:12px 0; padding:10px 12px; border-radius:10px; background:#e8f7ec; color:#14532d; border:1px solid #b8e3c1;">
+      Account created successfully. You can log in now.
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <div style="margin:12px 0; padding:10px 12px; border-radius:10px; background:#fcebec; color:#9f1239; border:1px solid #f6c5ca;">
+      {{ error }}
+    </div>
+  {% endif %}
+
+  <form action="/login" method="post">
+    <input type="hidden" name="next" value="{{ next_path }}" />
+
+    <label class="muted">Username</label><br/>
+    <input name="username" placeholder="e.g., ajay" required />
+
+    <br/><br/>
+    <label class="muted">Password</label><br/>
+    <input name="password" type="password" placeholder="Your password" required />
+
+    <br/><br/>
+    <button type="submit">Log In</button>
+  </form>
+
+  {% if allow_registration %}
+    <p class="muted" style="margin-top:14px; margin-bottom:0;">
+      New here? <a href="/register">Create an account</a>.
+    </p>
+  {% endif %}
+</div>
+
+{% endblock %}

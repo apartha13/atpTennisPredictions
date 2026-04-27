@@ -81,12 +81,13 @@
           {{ ev.rows|length }} submission{% if ev.rows|length != 1 %}s{% endif %} received.
         </div>
         <table>
-          <thead><tr><th>Person</th><th>Status</th></tr></thead>
+          <thead><tr><th>Person</th><th>Pick</th><th>Status</th></tr></thead>
           <tbody>
             {% for row in ev.rows %}
               <tr>
                 <td>{{ row.person }}</td>
-                <td>Submitted</td>
+                <td>{% if row.show_pick %}{{ row.player }}{% else %}Hidden{% endif %}</td>
+                <td>{% if row.show_pick %}Visible to you{% else %}Submitted{% endif %}</td>
               </tr>
             {% endfor %}
           </tbody>

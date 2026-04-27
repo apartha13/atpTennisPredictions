@@ -80,8 +80,12 @@ pip install -r requirements.txt
 ### 4️⃣ Set environment variables
 ```bash
 export DATABASE_URL="postgresql+psycopg2://..."
-export COMMISSIONER_KEY="your-secret-key"
 export LEAGUE_YEAR="2026"
+export SESSION_SECRET_KEY="replace-with-a-long-random-secret"
+export COOKIE_SECURE="false"  # true when running behind HTTPS
+export ADMIN_USERNAME="commissioner"
+export ADMIN_PASSWORD="replace-with-a-strong-password"
+export ALLOW_REGISTRATION="true"
 ```
 
 ### 5️⃣ Run the server
@@ -90,6 +94,58 @@ uvicorn app:app --reload
 ```
 Visit: http://127.0.0.1:8000
 
+## Authentication + Admin Setup
+
+This app now requires login before accessing app pages and APIs.
+
+How users get access:
+- If `ALLOW_REGISTRATION="true"`, users can create their own account at `/register`.
+- If `ALLOW_REGISTRATION="false"`, only pre-created users can log in.
+
+How admin is created:
+- On startup, if `ADMIN_USERNAME` and `ADMIN_PASSWORD` are set, the app bootstraps that user as an admin account.
+- That admin can access commissioner-only pages (`/model`, `/results`, `/commissioner/bracket`).
+
+### Environment variables you should set
+
+- `SESSION_SECRET_KEY`: long random secret used to sign session cookies.
+- `COOKIE_SECURE`: set to `true` in production HTTPS so cookies are only sent over TLS.
+- `ADMIN_USERNAME`: admin login username for bootstrap.
+- `ADMIN_PASSWORD`: strong admin password for bootstrap.
+- `ALLOW_REGISTRATION`: set to `false` for a private invite-only league.
+
+### Local example (macOS/Linux)
+
+```bash
+export DATABASE_URL="postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME"
+export LEAGUE_YEAR="2026"
+export SESSION_SECRET_KEY="replace-with-64-plus-random-chars"
+export COOKIE_SECURE="false"
+export ADMIN_USERNAME="commissioner"
+export ADMIN_PASSWORD="use-a-long-strong-password"
+export ALLOW_REGISTRATION="true"
+
+uvicorn app:app --reload
+```
+
+### Production example (Render or similar)
+
+Set these in your hosting platform environment variable settings:
+
+- `DATABASE_URL=postgresql+psycopg2://...`
+- `LEAGUE_YEAR=2026`
+- `SESSION_SECRET_KEY=<long random secret>`
+- `COOKIE_SECURE=true`
+- `ADMIN_USERNAME=commissioner`
+- `ADMIN_PASSWORD=<strong password>`
+- `ALLOW_REGISTRATION=false`
+
+Tip to generate a strong secret locally:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
 ### Quick Start (Copy/Paste)
 ```bash
 python3 -m venv .venv
@@ -97,8 +153,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 export DATABASE_URL="postgresql+psycopg2://..."
-export COMMISSIONER_KEY="your-secret-key"
 export LEAGUE_YEAR="2026"
+export SESSION_SECRET_KEY="replace-with-a-long-random-secret"
+export COOKIE_SECURE="false"
+export ADMIN_USERNAME="commissioner"
+export ADMIN_PASSWORD="replace-with-a-strong-password"
+export ALLOW_REGISTRATION="true"
 
 uvicorn app:app --reload
 ```
@@ -222,7 +282,11 @@ uvicorn app:app --reload
 ```bash
 source .venv/bin/activate
 export DATABASE_URL="postgresql+psycopg2://..."
-export COMMISSIONER_KEY="your-secret-key"
+export SESSION_SECRET_KEY="replace-with-a-long-random-secret"
+export COOKIE_SECURE="false"
+export ADMIN_USERNAME="commissioner"
+export ADMIN_PASSWORD="replace-with-a-strong-password"
+export ALLOW_REGISTRATION="true"
 export LEAGUE_YEAR="2026"
 uvicorn app:app --reload
 ```

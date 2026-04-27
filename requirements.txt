@@ -10,3 +10,4 @@ pandas
 numpy
 xgboost
 scikit-learn
+itsdangerous==2.2.0

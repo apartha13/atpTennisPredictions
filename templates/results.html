@@ -4,10 +4,6 @@
 <div class="card">
   <h3 style="margin-top:0;">Enter / Update Results (Commissioner Only)</h3>
   <form action="/results" method="post">
-    <label class="muted">Commissioner key</label><br/>
-    <input name="commissioner_key" type="password" placeholder="(Admin Only)" required />
-
-    <br/><br/>
     <label class="muted">Event</label><br/>
     <select name="event_id" required>
       {% for e in events %}
@@ -57,7 +53,6 @@
         <td>{% if e.picks_revealed %}Yes{% else %}No{% endif %}</td>
         <td>
           <form action="/results/reveal" method="post" style="display:flex; align-items:center; gap:10px; margin:0;">
-            <input name="commissioner_key" type="password" placeholder="Commissioner key" required style="max-width:220px; margin:0;" />
             <input type="hidden" name="event_id" value="{{ e.id }}" />
             <label style="display:flex; align-items:center; gap:6px; margin:0;">
               <input type="checkbox" name="reveal" {% if e.picks_revealed %}checked{% endif %} style="width:auto; max-width:none; margin:0;" />
