@@ -42,12 +42,16 @@ Example scoring (configurable):
 
 ## 🏗️ Tech Stack
 
-- **Backend:** FastAPI (Python)
-- **Frontend:** Jinja2 templates + custom CSS
-- **Database:** Supabase (PostgreSQL)
-- **ORM / SQL:** SQLAlchemy
-- **Hosting:** Render
-- **Server:** Uvicorn (dev), Gunicorn (production)
+- **Backend:** FastAPI (Python 3)
+- **Frontend:** Jinja2 templates + custom CSS + vanilla JavaScript
+- **Database:** PostgreSQL (Supabase-compatible)
+- **Data Access:** SQLAlchemy + raw SQL
+- **Authentication / Sessions:** Starlette SessionMiddleware + PBKDF2 password hashing
+- **ML / Modeling:** XGBoost + scikit-learn + pandas + numpy
+- **Servers:** Uvicorn (development), Gunicorn with Uvicorn workers (production)
+- **Edge / Reverse Proxy:** Nginx (typical production setup)
+- **Process Management:** systemd (typical Linux VM deployment)
+- **Email (optional):** SMTP (for reminder notifications when enabled)
 
 ---
 
