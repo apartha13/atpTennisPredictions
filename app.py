@@ -5,7 +5,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode, quote, parse_qs
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -81,10 +81,12 @@ DATABASE_URL = os.environ["DATABASE_URL"]  # Supabase/Render Postgres URL
 LEAGUE_YEAR = int(os.environ.get("LEAGUE_YEAR", "2026"))
 SESSION_SECRET_KEY = os.environ.get("SESSION_SECRET_KEY", "dev-only-change-me")
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").strip().lower() == "true"
+FORCE_HTTPS = os.environ.get("FORCE_HTTPS", "true").strip().lower() == "true"
 PASSWORD_ITERATIONS = int(os.environ.get("PASSWORD_ITERATIONS", "260000"))
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "").strip().lower()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ALLOW_REGISTRATION = os.environ.get("ALLOW_REGISTRATION", "true").strip().lower() == "true"
+CSRF_COOKIE_NAME = "csrf_token"
 
 if SESSION_SECRET_KEY == "dev-only-change-me":
     # Keep local development working, but require explicit secret for production.
@@ -450,7 +452,66 @@ def startup():
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+    host = (request.url.hostname or "").lower()
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+    forwarded_proto = (request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower())
+    is_https = forwarded_proto == "https" or (not forwarded_proto and request.url.scheme == "https")
+    is_local = host in local_hosts
+
+    if FORCE_HTTPS and not is_local and not is_https:
+        https_url = str(request.url.replace(scheme="https"))
+        return RedirectResponse(url=https_url, status_code=307)
+
+    csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
+    if not csrf_cookie:
+        csrf_cookie = secrets.token_urlsafe(32)
+
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        content_type = (request.headers.get("content-type") or "").lower()
+        is_form_request = (
+            "application/x-www-form-urlencoded" in content_type
+            or "multipart/form-data" in content_type
+        )
+
+        if is_form_request:
+            body = await request.body()
+
+            async def _restore_receive():
+                return {"type": "http.request", "body": body, "more_body": False}
+
+            # Restore the body stream for downstream handlers.
+            request._receive = _restore_receive
+
+            try:
+                if "application/x-www-form-urlencoded" in content_type:
+                    parsed = parse_qs(body.decode("utf-8", errors="ignore"), keep_blank_values=True)
+                    provided_token = (parsed.get("csrf_token") or [""])[0]
+                else:
+                    form = await request.form()
+                    provided_token = str(form.get("csrf_token", ""))
+                    request._receive = _restore_receive
+            except Exception:
+                provided_token = ""
+
+            if not provided_token:
+                provided_token = request.headers.get("x-csrf-token", "")
+
+            if not provided_token or not hmac.compare_digest(provided_token, csrf_cookie):
+                return HTMLResponse("Invalid CSRF token.", status_code=403)
+
     response = await call_next(request)
+
+    if not request.cookies.get(CSRF_COOKIE_NAME):
+        response.set_cookie(
+            key=CSRF_COOKIE_NAME,
+            value=csrf_cookie,
+            httponly=False,
+            secure=bool(COOKIE_SECURE or (FORCE_HTTPS and is_https)),
+            samesite="lax",
+            max_age=60 * 60 * 12,
+            path="/",
+        )
+
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -465,7 +526,7 @@ async def add_security_headers(request: Request, call_next):
         "frame-ancestors 'none'; "
         "base-uri 'self'",
     )
-    if request.url.scheme == "https":
+    if is_https:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
