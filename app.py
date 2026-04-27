@@ -1772,8 +1772,9 @@ def send_pick_reminders(
                 first_error = f"{recipient}: {str(exc)}"
 
     if failed and not sent:
+        error_msg = f"Reminder emails failed. First error: {first_error or 'Unknown SMTP error.'}"
         return RedirectResponse(
-            f"/results?{urlencode({'error': f'Reminder emails failed. First error: {first_error or "Unknown SMTP error."}'})}",
+            f"/results?{urlencode({'error': error_msg})}",
             status_code=303,
         )
 
